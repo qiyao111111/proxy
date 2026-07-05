@@ -370,7 +370,7 @@ install_socks5() {
   apt install -y dante-server
 
   generate_node_name_by_ipinfo
-  DEFAULT_SOCKS_NAME="SOCKS5-${AUTO_NODE_NAME}"
+  DEFAULT_SOCKS_NAME="$AUTO_NODE_NAME"
 
   echo ""
   echo "请选择 SOCKS5 安装模式："
@@ -559,7 +559,7 @@ install_ss2022() {
   install_docker
 
   generate_node_name_by_ipinfo
-  DEFAULT_SS_NAME="SS2022-${AUTO_NODE_NAME}"
+  DEFAULT_SS_NAME="$AUTO_NODE_NAME"
 
   echo ""
   echo "请选择 SS2022 安装模式："
