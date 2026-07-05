@@ -2,16 +2,17 @@
 
 set -e
 
-# ==============================
+# ============================================================
 # 三合一代理管理脚本
-# SOCKS5 / SS2022 / VLESS Reality
+# SOCKS5 / SK5 + SS2022 + VLESS Reality Vision TCP
 # 随机端口范围：10000-65535
-# ==============================
+# 适用于 Ubuntu / Debian
+# ============================================================
 
 RANDOM_PORT_MIN=10000
 RANDOM_PORT_MAX=65535
 
-# SOCKS5
+# SOCKS5 / SK5
 SOCKS_CONFIG="/etc/danted.conf"
 SOCKS_SERVICE="danted"
 
@@ -20,7 +21,7 @@ SS_CONTAINER="ss2022-server"
 SS_IMAGE="ghcr.io/shadowsocks/ssserver-rust:latest"
 SS_METHOD="2022-blake3-aes-128-gcm"
 
-# Reality
+# VLESS Reality
 XRAY_SERVICE="xray"
 XRAY_BIN="/usr/local/bin/xray"
 XRAY_CONFIG="/usr/local/etc/xray/config.json"
@@ -50,7 +51,7 @@ check_system() {
     . /etc/os-release
     OS_NAME="$ID"
   else
-    echo "无法识别系统"
+    echo "错误：无法识别系统"
     exit 1
   fi
 
@@ -59,7 +60,7 @@ check_system() {
       echo "系统检测通过：$PRETTY_NAME"
       ;;
     *)
-      echo "当前系统可能不是 Ubuntu / Debian，脚本仍会尝试继续安装"
+      echo "提醒：当前系统可能不是 Ubuntu / Debian，脚本仍会尝试继续安装"
       ;;
   esac
 }
@@ -201,16 +202,16 @@ get_default_interface() {
   INTERFACE=$(ip route | awk '/default/ {print $5; exit}')
 
   if [ -z "$INTERFACE" ]; then
-    echo "无法识别默认网卡"
+    echo "错误：无法识别默认网卡"
     exit 1
   fi
 
   echo "$INTERFACE"
 }
 
-# ==============================
+# ============================================================
 # SOCKS5 / SK5
-# ==============================
+# ============================================================
 
 install_socks5() {
   check_system
@@ -322,6 +323,9 @@ CONFIG
   echo "用户名：$SOCKS_USER"
   echo "密码：$SOCKS_PASS"
   echo ""
+  echo "测试命令："
+  echo "curl -x socks5://$SOCKS_USER:$SOCKS_PASS@$IP:$SOCKS_PORT https://ipinfo.io"
+  echo ""
   echo "开机自启：已开启"
   echo "======================================"
 }
@@ -331,9 +335,18 @@ status_socks5() {
   echo " SOCKS5 / SK5 状态"
   echo "======================================"
   systemctl status "$SOCKS_SERVICE" --no-pager || true
+
   echo ""
   echo "监听端口："
   ss -lntup | grep danted || true
+
+  echo ""
+  echo "配置文件："
+  if [ -f "$SOCKS_CONFIG" ]; then
+    cat "$SOCKS_CONFIG"
+  else
+    echo "未找到 $SOCKS_CONFIG"
+  fi
 }
 
 restart_socks5() {
@@ -365,9 +378,9 @@ uninstall_socks5() {
   echo "SOCKS5 / SK5 已卸载"
 }
 
-# ==============================
+# ============================================================
 # SS2022
-# ==============================
+# ============================================================
 
 install_ss2022() {
   check_system
@@ -479,6 +492,11 @@ status_ss2022() {
   echo " SS2022 状态"
   echo "======================================"
 
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "Docker 未安装"
+    return
+  fi
+
   if docker ps -a --format '{{.Names}}' | grep -q "^${SS_CONTAINER}$"; then
     docker ps -a | grep "$SS_CONTAINER" || true
     echo ""
@@ -490,6 +508,11 @@ status_ss2022() {
 }
 
 restart_ss2022() {
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "Docker 未安装"
+    return
+  fi
+
   echo "正在重启 SS2022..."
   docker restart "$SS_CONTAINER"
   echo "SS2022 重启完成"
@@ -504,15 +527,17 @@ uninstall_ss2022() {
     exit 0
   fi
 
-  docker stop "$SS_CONTAINER" >/dev/null 2>&1 || true
-  docker rm "$SS_CONTAINER" >/dev/null 2>&1 || true
+  if command -v docker >/dev/null 2>&1; then
+    docker stop "$SS_CONTAINER" >/dev/null 2>&1 || true
+    docker rm "$SS_CONTAINER" >/dev/null 2>&1 || true
+  fi
 
   echo "SS2022 容器已卸载，Docker 本身未卸载。"
 }
 
-# ==============================
-# VLESS Reality Vision TCP
-# ==============================
+# ============================================================
+# VLESS + Reality + Vision + TCP
+# ============================================================
 
 generate_reality_keys() {
   echo ""
@@ -745,6 +770,7 @@ status_reality() {
   echo "======================================"
   echo " VLESS Reality 状态"
   echo "======================================"
+
   systemctl status "$XRAY_SERVICE" --no-pager || true
 
   echo ""
@@ -754,6 +780,9 @@ status_reality() {
   echo ""
   echo "最近日志："
   journalctl -u "$XRAY_SERVICE" -n 50 --no-pager || true
+
+  echo ""
+  echo "配置文件路径：$XRAY_CONFIG"
 }
 
 restart_reality() {
@@ -786,9 +815,9 @@ uninstall_reality() {
   echo "Xray Reality 已卸载"
 }
 
-# ==============================
+# ============================================================
 # 主菜单
-# ==============================
+# ============================================================
 
 main_menu() {
   echo "请选择操作："
