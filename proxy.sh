@@ -1,10 +1,13 @@
 #!/bin/bash
+
 set -e
 
 # ============================================================
 # 三合一代理管理脚本
 # SOCKS5 / SK5 + SS2022 + VLESS Reality Vision TCP
 # 随机端口范围：10000-65535
+# 节点命名：国家-地区-城市-IP
+# 支持：上海时间 + BBR + 绿色二维码
 # 适用于 Ubuntu / Debian
 # ============================================================
 
@@ -35,6 +38,7 @@ echo " 1. SOCKS5 / SK5"
 echo " 2. SS2022"
 echo " 3. VLESS + Reality + Vision + TCP"
 echo " 随机端口范围：${RANDOM_PORT_MIN}-${RANDOM_PORT_MAX}"
+echo " 支持：绿色二维码 + BBR + 上海时间 + IP地区自动命名"
 echo " 适用于 Ubuntu / Debian"
 echo "======================================"
 echo ""
@@ -67,8 +71,60 @@ check_system() {
 install_base_packages() {
   echo ""
   echo "正在安装基础依赖..."
+
   apt update -y
-  apt install -y curl wget unzip socat cron ufw net-tools iproute2 procps openssl ca-certificates
+  apt install -y curl wget unzip socat cron ufw net-tools iproute2 procps openssl ca-certificates qrencode jq
+}
+
+set_shanghai_time() {
+  echo ""
+  echo "正在设置系统时区为 Asia/Shanghai..."
+
+  timedatectl set-timezone Asia/Shanghai 2>/dev/null || true
+  timedatectl set-ntp true 2>/dev/null || true
+
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl enable systemd-timesyncd >/dev/null 2>&1 || true
+    systemctl restart systemd-timesyncd 2>/dev/null || true
+  fi
+
+  CURRENT_TIMEZONE=$(timedatectl 2>/dev/null | grep "Time zone" | awk -F': ' '{print $2}' || echo "unknown")
+  CURRENT_TIME=$(date "+%Y-%m-%d %H:%M:%S")
+
+  echo "当前时区：$CURRENT_TIMEZONE"
+  echo "当前时间：$CURRENT_TIME"
+
+  if timedatectl 2>/dev/null | grep -q "Asia/Shanghai"; then
+    echo "上海时间设置成功"
+  else
+    echo "提醒：时区设置可能未成功，请手动检查：timedatectl"
+  fi
+}
+
+enable_bbr() {
+  echo ""
+  echo "正在开启 BBR..."
+
+  modprobe tcp_bbr 2>/dev/null || true
+
+  cat > /etc/sysctl.d/99-bbr.conf <<EOF
+net.core.default_qdisc=fq
+net.ipv4.tcp_congestion_control=bbr
+EOF
+
+  sysctl --system >/dev/null 2>&1 || true
+
+  CURRENT_CC=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo unknown)
+  CURRENT_QDISC=$(sysctl -n net.core.default_qdisc 2>/dev/null || echo unknown)
+
+  echo "当前拥塞控制算法：$CURRENT_CC"
+  echo "当前队列算法：$CURRENT_QDISC"
+
+  if [ "$CURRENT_CC" = "bbr" ]; then
+    echo "BBR 已成功开启"
+  else
+    echo "提醒：BBR 未成功开启，可能是内核或 VPS 限制"
+  fi
 }
 
 install_docker() {
@@ -123,22 +179,63 @@ random_short_id() {
   openssl rand -hex 8
 }
 
-get_public_ip() {
-  IP=$(curl -4 -s --max-time 8 https://api.ipify.org || true)
+sanitize_name() {
+  echo "$1" | tr ' ' '-' | tr -cd 'A-Za-z0-9._-'
+}
 
-  if [ -z "$IP" ]; then
-    IP=$(curl -4 -s --max-time 8 https://ipv4.icanhazip.com || true)
+get_ipinfo() {
+  IPINFO_JSON=$(curl -4 -s --max-time 10 https://ipinfo.io/json || true)
+
+  PUBLIC_IP=""
+  IP_COUNTRY=""
+  IP_REGION=""
+  IP_CITY=""
+
+  if command -v jq >/dev/null 2>&1 && [ -n "$IPINFO_JSON" ]; then
+    PUBLIC_IP=$(echo "$IPINFO_JSON" | jq -r '.ip // empty')
+    IP_COUNTRY=$(echo "$IPINFO_JSON" | jq -r '.country // empty')
+    IP_REGION=$(echo "$IPINFO_JSON" | jq -r '.region // empty')
+    IP_CITY=$(echo "$IPINFO_JSON" | jq -r '.city // empty')
   fi
 
-  if [ -z "$IP" ]; then
-    IP=$(curl -4 -s --max-time 8 https://ifconfig.me || true)
+  if [ -z "$PUBLIC_IP" ]; then
+    PUBLIC_IP=$(curl -4 -s --max-time 8 https://api.ipify.org || true)
   fi
 
-  if [ -z "$IP" ]; then
-    IP=$(hostname -I | awk '{print $1}')
+  if [ -z "$PUBLIC_IP" ]; then
+    PUBLIC_IP=$(curl -4 -s --max-time 8 https://ipv4.icanhazip.com || true)
   fi
 
-  echo "$IP"
+  if [ -z "$PUBLIC_IP" ]; then
+    PUBLIC_IP=$(curl -4 -s --max-time 8 https://ifconfig.me || true)
+  fi
+
+  if [ -z "$PUBLIC_IP" ]; then
+    PUBLIC_IP=$(hostname -I | awk '{print $1}')
+  fi
+
+  IP_COUNTRY=${IP_COUNTRY:-UnknownCountry}
+  IP_REGION=${IP_REGION:-UnknownRegion}
+  IP_CITY=${IP_CITY:-UnknownCity}
+}
+
+generate_node_name_by_ipinfo() {
+  get_ipinfo
+
+  CLEAN_COUNTRY=$(sanitize_name "$IP_COUNTRY")
+  CLEAN_REGION=$(sanitize_name "$IP_REGION")
+  CLEAN_CITY=$(sanitize_name "$IP_CITY")
+  CLEAN_IP=$(sanitize_name "$PUBLIC_IP")
+
+  if [ -n "$CLEAN_COUNTRY" ] && [ -n "$CLEAN_REGION" ] && [ -n "$CLEAN_CITY" ] && [ -n "$CLEAN_IP" ]; then
+    AUTO_NODE_NAME="${CLEAN_COUNTRY}-${CLEAN_REGION}-${CLEAN_CITY}-${CLEAN_IP}"
+  elif [ -n "$CLEAN_COUNTRY" ] && [ -n "$CLEAN_CITY" ] && [ -n "$CLEAN_IP" ]; then
+    AUTO_NODE_NAME="${CLEAN_COUNTRY}-${CLEAN_CITY}-${CLEAN_IP}"
+  elif [ -n "$CLEAN_COUNTRY" ] && [ -n "$CLEAN_IP" ]; then
+    AUTO_NODE_NAME="${CLEAN_COUNTRY}-${CLEAN_IP}"
+  else
+    AUTO_NODE_NAME="$DEFAULT_NODE_NAME"
+  fi
 }
 
 validate_port() {
@@ -165,6 +262,23 @@ validate_port() {
   fi
 }
 
+open_firewall_tcp() {
+  PORT_TO_OPEN="$1"
+
+  echo ""
+  echo "正在放行端口：$PORT_TO_OPEN/tcp"
+
+  if command -v ufw >/dev/null 2>&1; then
+    ufw allow "$PORT_TO_OPEN"/tcp >/dev/null 2>&1 || true
+  fi
+
+  if command -v iptables >/dev/null 2>&1; then
+    iptables -I INPUT -p tcp --dport "$PORT_TO_OPEN" -j ACCEPT 2>/dev/null || true
+  fi
+
+  echo "提醒：如果 VPS 云后台有安全组，也要手动放行 TCP $PORT_TO_OPEN"
+}
+
 open_firewall_tcp_udp() {
   PORT_TO_OPEN="$1"
 
@@ -180,21 +294,8 @@ open_firewall_tcp_udp() {
     iptables -I INPUT -p tcp --dport "$PORT_TO_OPEN" -j ACCEPT 2>/dev/null || true
     iptables -I INPUT -p udp --dport "$PORT_TO_OPEN" -j ACCEPT 2>/dev/null || true
   fi
-}
 
-open_firewall_tcp() {
-  PORT_TO_OPEN="$1"
-
-  echo ""
-  echo "正在放行端口：$PORT_TO_OPEN/tcp"
-
-  if command -v ufw >/dev/null 2>&1; then
-    ufw allow "$PORT_TO_OPEN"/tcp >/dev/null 2>&1 || true
-  fi
-
-  if command -v iptables >/dev/null 2>&1; then
-    iptables -I INPUT -p tcp --dport "$PORT_TO_OPEN" -j ACCEPT 2>/dev/null || true
-  fi
+  echo "提醒：如果 VPS 云后台有安全组，也要手动放行 TCP/UDP $PORT_TO_OPEN"
 }
 
 get_default_interface() {
@@ -208,6 +309,52 @@ get_default_interface() {
   echo "$INTERFACE"
 }
 
+url_encode_node_name() {
+  NODE_NAME_ENCODED=$(printf '%s' "$NODE_NAME" | sed 's/ /%20/g')
+}
+
+show_qrcode() {
+  QR_CONTENT="$1"
+
+  if command -v qrencode >/dev/null 2>&1; then
+    echo ""
+    echo "请用手机代理软件扫码导入："
+    echo ""
+
+    echo -e "\033[32m"
+    echo "$QR_CONTENT" | qrencode -t ANSIUTF8 -m 2
+    echo -e "\033[0m"
+
+    echo ""
+    echo "如果二维码太大或显示不完整，请放大终端窗口后重新运行。"
+  else
+    echo "未安装 qrencode，无法显示二维码"
+  fi
+}
+
+show_common_status() {
+  get_ipinfo
+
+  echo ""
+  echo "IP 信息："
+  echo "服务器 IP：$PUBLIC_IP"
+  echo "识别国家：$IP_COUNTRY"
+  echo "识别地区：$IP_REGION"
+  echo "识别城市：$IP_CITY"
+
+  echo ""
+  echo "BBR 状态："
+  sysctl net.ipv4.tcp_congestion_control 2>/dev/null || true
+  sysctl net.core.default_qdisc 2>/dev/null || true
+
+  echo ""
+  echo "系统时间："
+  date "+%Y-%m-%d %H:%M:%S"
+  timedatectl 2>/dev/null | grep "Time zone" || true
+  timedatectl 2>/dev/null | grep "System clock synchronized" || true
+  timedatectl 2>/dev/null | grep "NTP service" || true
+}
+
 # ============================================================
 # SOCKS5 / SK5
 # ============================================================
@@ -215,15 +362,20 @@ get_default_interface() {
 install_socks5() {
   check_system
   install_base_packages
+  set_shanghai_time
+  enable_bbr
 
   echo ""
   echo "正在安装 Dante SOCKS5..."
   apt install -y dante-server
 
+  generate_node_name_by_ipinfo
+  DEFAULT_SOCKS_NAME="SOCKS5-${AUTO_NODE_NAME}"
+
   echo ""
   echo "请选择 SOCKS5 安装模式："
-  echo "1) 自定义端口 / 账号 / 密码"
-  echo "2) 随机生成端口 / 账号 / 密码"
+  echo "1) 自定义端口 / 账号 / 密码 / 节点名称"
+  echo "2) 随机端口 / 随机账号 / 随机密码 / 自动节点名"
   echo ""
 
   read -p "请输入选项 [1/2]，默认 2: " MODE
@@ -234,10 +386,14 @@ install_socks5() {
     read -p "请输入 SOCKS5 用户名: " SOCKS_USER
     read -s -p "请输入 SOCKS5 密码: " SOCKS_PASS
     echo ""
+    read -p "请输入节点名称，默认 $DEFAULT_SOCKS_NAME: " NODE_NAME
+
+    NODE_NAME=${NODE_NAME:-$DEFAULT_SOCKS_NAME}
   else
     SOCKS_PORT=$(random_port)
     SOCKS_USER=$(random_user)
     SOCKS_PASS=$(random_pass)
+    NODE_NAME="$DEFAULT_SOCKS_NAME"
   fi
 
   if [ -z "$SOCKS_PORT" ] || [ -z "$SOCKS_USER" ] || [ -z "$SOCKS_PASS" ]; then
@@ -301,19 +457,30 @@ CONFIG
     exit 1
   fi
 
-  IP=$(get_public_ip)
+  get_ipinfo
+  IP="$PUBLIC_IP"
+  url_encode_node_name
+
+  SOCKS_URL="socks5://$SOCKS_USER:$SOCKS_PASS@$IP:$SOCKS_PORT#$NODE_NAME_ENCODED"
 
   echo ""
   echo "======================================"
   echo " SOCKS5 / SK5 安装完成"
   echo "======================================"
   echo "服务器 IP：$IP"
+  echo "识别国家：$IP_COUNTRY"
+  echo "识别地区：$IP_REGION"
+  echo "识别城市：$IP_CITY"
   echo "端口：$SOCKS_PORT"
   echo "用户名：$SOCKS_USER"
   echo "密码：$SOCKS_PASS"
+  echo "节点名称：$NODE_NAME"
   echo ""
-  echo "连接格式："
-  echo "socks5://$SOCKS_USER:$SOCKS_PASS@$IP:$SOCKS_PORT"
+  echo "SOCKS5 分享链接："
+  echo "$SOCKS_URL"
+  echo ""
+  echo "SOCKS5 绿色二维码："
+  show_qrcode "$SOCKS_URL"
   echo ""
   echo "Shadowrocket / Clash 手动填写："
   echo "类型：SOCKS5"
@@ -333,6 +500,7 @@ status_socks5() {
   echo "======================================"
   echo " SOCKS5 / SK5 状态"
   echo "======================================"
+
   systemctl status "$SOCKS_SERVICE" --no-pager || true
 
   echo ""
@@ -346,6 +514,8 @@ status_socks5() {
   else
     echo "未找到 $SOCKS_CONFIG"
   fi
+
+  show_common_status
 }
 
 restart_socks5() {
@@ -384,12 +554,17 @@ uninstall_socks5() {
 install_ss2022() {
   check_system
   install_base_packages
+  set_shanghai_time
+  enable_bbr
   install_docker
+
+  generate_node_name_by_ipinfo
+  DEFAULT_SS_NAME="SS2022-${AUTO_NODE_NAME}"
 
   echo ""
   echo "请选择 SS2022 安装模式："
-  echo "1) 自定义端口 / 自定义密钥"
-  echo "2) 随机生成端口 / 随机密钥"
+  echo "1) 自定义端口 / 自定义密钥 / 节点名称"
+  echo "2) 随机端口 / 随机密钥 / 自动节点名"
   echo ""
 
   read -p "请输入选项 [1/2]，默认 2: " MODE
@@ -400,13 +575,17 @@ install_ss2022() {
     echo ""
     echo "如果你不懂密钥，直接回车，让脚本自动生成。"
     read -p "请输入自定义密钥，留空则自动生成: " SS_KEY
+    read -p "请输入节点名称，默认 $DEFAULT_SS_NAME: " NODE_NAME
 
     if [ -z "$SS_KEY" ]; then
       SS_KEY=$(random_key)
     fi
+
+    NODE_NAME=${NODE_NAME:-$DEFAULT_SS_NAME}
   else
     SS_PORT=$(random_port)
     SS_KEY=$(random_key)
+    NODE_NAME="$DEFAULT_SS_NAME"
   fi
 
   if [ -z "$SS_PORT" ] || [ -z "$SS_KEY" ]; then
@@ -451,20 +630,31 @@ install_ss2022() {
     exit 1
   fi
 
-  IP=$(get_public_ip)
+  get_ipinfo
+  IP="$PUBLIC_IP"
+  url_encode_node_name
+
   SS_USERINFO=$(printf "%s:%s" "$SS_METHOD" "$SS_KEY" | base64 -w 0 2>/dev/null || printf "%s:%s" "$SS_METHOD" "$SS_KEY" | base64 | tr -d '\n')
+  SS_URL="ss://$SS_USERINFO@$IP:$SS_PORT#$NODE_NAME_ENCODED"
 
   echo ""
   echo "======================================"
   echo " SS2022 安装完成"
   echo "======================================"
   echo "服务器 IP：$IP"
+  echo "识别国家：$IP_COUNTRY"
+  echo "识别地区：$IP_REGION"
+  echo "识别城市：$IP_CITY"
   echo "端口：$SS_PORT"
   echo "加密方式：$SS_METHOD"
   echo "密码 / 密钥：$SS_KEY"
+  echo "节点名称：$NODE_NAME"
   echo ""
   echo "SS URI："
-  echo "ss://$SS_USERINFO@$IP:$SS_PORT#SS2022-$IP"
+  echo "$SS_URL"
+  echo ""
+  echo "SS2022 绿色二维码："
+  show_qrcode "$SS_URL"
   echo ""
   echo "Shadowrocket 手动填写："
   echo "类型：Shadowsocks"
@@ -474,7 +664,7 @@ install_ss2022() {
   echo "密码：$SS_KEY"
   echo ""
   echo "Mihomo / Clash Meta 配置："
-  echo "- name: SS2022-$IP"
+  echo "- name: $NODE_NAME"
   echo "  type: ss"
   echo "  server: $IP"
   echo "  port: $SS_PORT"
@@ -504,6 +694,8 @@ status_ss2022() {
   else
     echo "未找到 SS2022 容器"
   fi
+
+  show_common_status
 }
 
 restart_ss2022() {
@@ -538,31 +730,48 @@ uninstall_ss2022() {
 # VLESS + Reality + Vision + TCP
 # ============================================================
 
-generate_reality_keys() {
-  echo ""
-  echo "正在生成 Reality 密钥..."
-
-  KEY_OUTPUT=$($XRAY_BIN x25519)
-
-  PRIVATE_KEY=$(echo "$KEY_OUTPUT" | grep "Private key" | awk '{print $3}')
-  PUBLIC_KEY=$(echo "$KEY_OUTPUT" | grep "Public key" | awk '{print $3}')
-
-  if [ -z "$PRIVATE_KEY" ] || [ -z "$PUBLIC_KEY" ]; then
-    echo "错误：Reality 密钥生成失败"
-    exit 1
-  fi
-}
-
 generate_uuid() {
   echo ""
   echo "正在生成 UUID..."
 
-  UUID=$($XRAY_BIN uuid)
+  UUID=$($XRAY_BIN uuid 2>&1 | tr -d '[:space:]')
 
   if [ -z "$UUID" ]; then
     echo "错误：UUID 生成失败"
     exit 1
   fi
+
+  echo "UUID 生成成功"
+}
+
+generate_reality_keys() {
+  echo ""
+  echo "正在生成 Reality 密钥..."
+
+  KEY_OUTPUT=$($XRAY_BIN x25519 2>&1 || true)
+
+  PRIVATE_KEY=$(echo "$KEY_OUTPUT" | awk -F': ' '/PrivateKey/ {print $2; exit}')
+  PUBLIC_KEY=$(echo "$KEY_OUTPUT" | awk -F': ' '/PublicKey/ {print $2; exit}')
+
+  PRIVATE_KEY=$(echo "$PRIVATE_KEY" | tr -d '[:space:]')
+  PUBLIC_KEY=$(echo "$PUBLIC_KEY" | tr -d '[:space:]')
+
+  if [ -z "$PRIVATE_KEY" ] || [ -z "$PUBLIC_KEY" ]; then
+    echo "错误：Reality 密钥生成失败"
+    echo ""
+    echo "Xray 原始输出如下："
+    echo "$KEY_OUTPUT"
+    echo ""
+    echo "解析结果："
+    echo "PRIVATE_KEY=$PRIVATE_KEY"
+    echo "PUBLIC_KEY=$PUBLIC_KEY"
+    echo ""
+    echo "请手动执行排查："
+    echo "$XRAY_BIN x25519"
+    exit 1
+  fi
+
+  echo "Reality 密钥生成成功"
 }
 
 backup_old_xray_config() {
@@ -654,68 +863,89 @@ test_xray_config() {
   fi
 }
 
+start_xray() {
+  echo ""
+  echo "正在启动 Xray..."
+
+  systemctl restart "$XRAY_SERVICE"
+  systemctl enable "$XRAY_SERVICE" >/dev/null 2>&1 || true
+
+  sleep 2
+
+  if systemctl is-active --quiet "$XRAY_SERVICE"; then
+    echo "Xray 启动成功"
+  else
+    echo "错误：Xray 启动失败，请查看日志："
+    journalctl -u "$XRAY_SERVICE" -n 80 --no-pager
+    exit 1
+  fi
+}
+
 install_reality() {
   check_system
   install_base_packages
+  set_shanghai_time
+  enable_bbr
   install_xray
+
+  generate_node_name_by_ipinfo
 
   echo ""
   echo "请选择 Reality 安装模式："
   echo "1) 自定义端口 / SNI / 指纹 / 节点名称"
-  echo "2) 随机端口 / 默认 SNI"
+  echo "2) 随机端口 / 默认 SNI / 自动节点名"
   echo ""
 
   read -p "请输入选项 [1/2]，默认 2: " MODE
   MODE=${MODE:-2}
 
   if [ "$MODE" = "1" ]; then
-    read -p "请输入 VLESS 端口，必须 >=10000: " VLESS_PORT
+    read -p "请输入 VLESS 端口，必须 >=10000，例如 31566: " VLESS_PORT
     read -p "请输入 SNI 域名，默认 $DEFAULT_SNI: " SNI_DOMAIN
     read -p "请输入浏览器指纹，默认 $DEFAULT_FP: " FINGERPRINT
-    read -p "请输入节点名称，默认 $DEFAULT_NODE_NAME: " NODE_NAME
+    read -p "请输入节点名称，默认 $AUTO_NODE_NAME: " NODE_NAME
 
     SNI_DOMAIN=${SNI_DOMAIN:-$DEFAULT_SNI}
     FINGERPRINT=${FINGERPRINT:-$DEFAULT_FP}
-    NODE_NAME=${NODE_NAME:-$DEFAULT_NODE_NAME}
+    NODE_NAME=${NODE_NAME:-$AUTO_NODE_NAME}
   else
     VLESS_PORT=$(random_port)
     SNI_DOMAIN="$DEFAULT_SNI"
     FINGERPRINT="$DEFAULT_FP"
-    NODE_NAME="$DEFAULT_NODE_NAME"
+    NODE_NAME="$AUTO_NODE_NAME"
   fi
 
   validate_port "$VLESS_PORT"
 
   generate_uuid
   generate_reality_keys
+
   SHORT_ID=$(random_short_id)
 
   write_xray_config
   test_xray_config
   open_firewall_tcp "$VLESS_PORT"
+  start_xray
 
-  echo ""
-  echo "正在启动 Xray..."
-  systemctl restart "$XRAY_SERVICE"
-  systemctl enable "$XRAY_SERVICE" >/dev/null 2>&1 || true
+  get_ipinfo
+  IP="$PUBLIC_IP"
+  url_encode_node_name
 
-  sleep 2
-
-  if ! systemctl is-active --quiet "$XRAY_SERVICE"; then
-    echo "错误：Xray 启动失败"
-    journalctl -u "$XRAY_SERVICE" -n 80 --no-pager
-    exit 1
-  fi
-
-  IP=$(get_public_ip)
-  NODE_NAME_ENCODED=$(printf '%s' "$NODE_NAME" | sed 's/ /%20/g')
   VLESS_URL="vless://$UUID@$IP:$VLESS_PORT?encryption=none&security=reality&flow=xtls-rprx-vision&type=tcp&sni=$SNI_DOMAIN&pbk=$PUBLIC_KEY&sid=$SHORT_ID&fp=$FINGERPRINT#$NODE_NAME_ENCODED"
+
+  BBR_CC=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo unknown)
+  BBR_QDISC=$(sysctl -n net.core.default_qdisc 2>/dev/null || echo unknown)
+  SYSTEM_TIME=$(date "+%Y-%m-%d %H:%M:%S")
+  SYSTEM_TIMEZONE=$(timedatectl 2>/dev/null | grep "Time zone" | awk -F': ' '{print $2}' || echo unknown)
 
   echo ""
   echo "======================================"
   echo " VLESS + Reality + Vision 安装完成"
   echo "======================================"
   echo "服务器 IP：$IP"
+  echo "识别国家：$IP_COUNTRY"
+  echo "识别地区：$IP_REGION"
+  echo "识别城市：$IP_CITY"
   echo "端口：$VLESS_PORT"
   echo "UUID：$UUID"
   echo "协议：VLESS"
@@ -727,9 +957,16 @@ install_reality() {
   echo "Public Key：$PUBLIC_KEY"
   echo "Short ID：$SHORT_ID"
   echo "节点名称：$NODE_NAME"
+  echo "BBR 拥塞控制：$BBR_CC"
+  echo "BBR 队列算法：$BBR_QDISC"
+  echo "系统时间：$SYSTEM_TIME"
+  echo "系统时区：$SYSTEM_TIMEZONE"
   echo ""
   echo "VLESS 分享链接："
   echo "$VLESS_URL"
+  echo ""
+  echo "VLESS 绿色二维码："
+  show_qrcode "$VLESS_URL"
   echo ""
   echo "Shadowrocket 手动填写："
   echo "类型：VLESS"
@@ -761,7 +998,21 @@ install_reality() {
   echo "    public-key: $PUBLIC_KEY"
   echo "    short-id: $SHORT_ID"
   echo ""
+  echo "管理命令："
+  echo "systemctl status xray"
+  echo "systemctl restart xray"
+  echo "systemctl stop xray"
+  echo "journalctl -u xray -n 80 --no-pager"
+  echo ""
+  echo "配置文件：$XRAY_CONFIG"
   echo "开机自启：已开启"
+  echo ""
+  echo "重要提醒："
+  echo "1. Reality + Vision + TCP 只需要放行 TCP 端口"
+  echo "2. 如果客户端连不上，请检查 VPS 云后台安全组是否放行 TCP $VLESS_PORT"
+  echo "3. 如果二维码不好扫，请放大终端窗口，或者复制 VLESS 分享链接导入"
+  echo "4. 节点地区来自 ipinfo.io，仅供参考，最终以实际出口检测为准"
+  echo "5. BBR 是网络优化，不是换线路；线路本身差，BBR 也救不了全部问题"
   echo "======================================"
 }
 
@@ -782,6 +1033,8 @@ status_reality() {
 
   echo ""
   echo "配置文件路径：$XRAY_CONFIG"
+
+  show_common_status
 }
 
 restart_reality() {
