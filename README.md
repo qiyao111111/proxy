@@ -1,14 +1,3 @@
-下面是可以直接放到 GitHub 仓库首页的 **README.md 介绍**。
-
-你在仓库里新建文件：
-
-```text
-README.md
-```
-
-然后粘贴下面内容。
-
-````markdown
 # Proxy 一键三合一脚本
 
 一个适用于 Ubuntu / Debian VPS 的代理协议一键部署脚本，支持：
@@ -17,7 +6,7 @@ README.md
 - SS2022
 - VLESS + Reality + Vision + TCP
 
-脚本支持自动安装、自动生成配置、自动放行端口、自动设置上海时间、自动开启 BBR、自动识别 IP 地区，并生成可直接导入客户端的分享链接和二维码。
+脚本支持自动安装、自动生成配置、自动放行端口、自动设置上海时间、自动开启 BBR、自动识别 IP 地区，并生成可直接导入客户端的分享链接和绿色二维码。
 
 ---
 
@@ -36,18 +25,40 @@ README.md
 ## 已集成功能
 
 - 随机端口范围：`10000-65535`
-- 自定义端口、账号、密码、密钥
+- 支持自定义端口、账号、密码、密钥
 - 自动安装基础依赖
 - 自动安装 Docker
 - 自动安装 Xray Core
 - 自动开启 BBR
 - 自动设置系统时区为 `Asia/Shanghai`
 - 自动识别服务器 IP、国家、地区、城市
-- 节点自动命名格式：
+- 自动生成分享链接
+- 自动生成绿色二维码
+- 支持查看状态、重启、卸载
+
+---
+
+## 节点命名规则
+
+脚本会通过：
+
+```text
+https://ipinfo.io/json
+
+自动识别服务器出口 IP 的：
+
+* 国家
+* 地区
+* 城市
+* IP 地址
+
+然后自动生成节点名称。
+
+节点命名格式：
 
 ```text
 国家-地区-城市-IP
-````
+```
 
 示例：
 
@@ -57,9 +68,7 @@ US-California-LosAngeles-69.63.203.61
 JP-Tokyo-Tokyo-xxx.xxx.xxx.xxx
 ```
 
-* 自动生成分享链接
-* 自动生成绿色二维码
-* 支持查看状态、重启、卸载
+三个协议统一使用相同命名格式，不额外添加 `SOCKS5`、`SS2022`、`VLESS` 前缀。
 
 ---
 
@@ -96,9 +105,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/qiyao111111/proxy/main/proxy
 
 ---
 
-## 安装示例
-
-### 安装 SOCKS5 / SK5
+## 安装 SOCKS5 / SK5
 
 运行脚本后选择：
 
@@ -106,7 +113,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/qiyao111111/proxy/main/proxy
 1
 ```
 
-可以选择：
+安装模式：
 
 ```text
 1) 自定义端口 / 账号 / 密码 / 节点名称
@@ -119,9 +126,15 @@ bash <(curl -fsSL https://raw.githubusercontent.com/qiyao111111/proxy/main/proxy
 socks5://用户名:密码@服务器IP:端口#节点名称
 ```
 
+示例：
+
+```text
+socks5://sk5_xxxxxx:password@78.105.182.181:20787#TW-Taiwan-Taipei-78.105.182.181
+```
+
 ---
 
-### 安装 SS2022
+## 安装 SS2022
 
 运行脚本后选择：
 
@@ -129,7 +142,7 @@ socks5://用户名:密码@服务器IP:端口#节点名称
 2
 ```
 
-可以选择：
+安装模式：
 
 ```text
 1) 自定义端口 / 自定义密钥 / 节点名称
@@ -142,9 +155,15 @@ socks5://用户名:密码@服务器IP:端口#节点名称
 ss://加密信息@服务器IP:端口#节点名称
 ```
 
+示例：
+
+```text
+ss://xxxx@78.105.182.181:45990#TW-Taiwan-Taipei-78.105.182.181
+```
+
 ---
 
-### 安装 VLESS Reality
+## 安装 VLESS Reality
 
 运行脚本后选择：
 
@@ -152,7 +171,7 @@ ss://加密信息@服务器IP:端口#节点名称
 3
 ```
 
-可以选择：
+安装模式：
 
 ```text
 1) 自定义端口 / SNI / 指纹 / 节点名称
@@ -175,32 +194,11 @@ Flow：xtls-rprx-vision
 vless://UUID@服务器IP:端口?encryption=none&security=reality&flow=xtls-rprx-vision&type=tcp&sni=www.paypal.com&pbk=PublicKey&sid=ShortID&fp=chrome#节点名称
 ```
 
----
-
-## 节点命名规则
-
-脚本会通过：
-
-```text
-https://ipinfo.io/json
-```
-
-自动识别服务器出口 IP 的：
-
-* 国家
-* 地区
-* 城市
-* IP 地址
-
-然后自动生成节点名称。
-
 示例：
 
 ```text
-TW-Taiwan-Taipei-78.105.182.181
+vless://xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx@78.105.182.181:55661?encryption=none&security=reality&flow=xtls-rprx-vision&type=tcp&sni=www.paypal.com&pbk=PublicKey&sid=ShortID&fp=chrome#TW-Taiwan-Taipei-78.105.182.181
 ```
-
-三个协议统一使用相同命名格式，不额外添加 `SOCKS5`、`SS2022`、`VLESS` 前缀。
 
 ---
 
@@ -208,7 +206,7 @@ TW-Taiwan-Taipei-78.105.182.181
 
 安装完成后，脚本会自动生成绿色二维码。
 
-如果二维码显示不完整，请：
+如果二维码显示不完整：
 
 * 放大终端窗口
 * 或者直接复制分享链接导入客户端
@@ -219,7 +217,7 @@ TW-Taiwan-Taipei-78.105.182.181
 
 脚本会尝试自动放行系统防火墙端口。
 
-但是如果 VPS 服务商有云防火墙 / 安全组，需要你手动放行对应端口。
+如果 VPS 服务商有云防火墙 / 安全组，需要手动放行对应端口。
 
 ### Reality
 
@@ -275,6 +273,26 @@ docker ps -a
 docker logs ss2022-server
 ```
 
+查看监听端口：
+
+```bash
+ss -lntup
+```
+
+查看 BBR 状态：
+
+```bash
+sysctl net.ipv4.tcp_congestion_control
+sysctl net.core.default_qdisc
+```
+
+查看系统时间：
+
+```bash
+timedatectl
+date
+```
+
 ---
 
 ## 依赖组件
@@ -297,6 +315,19 @@ docker logs ss2022-server
 * dante-server
 * docker
 * xray-core
+
+---
+
+## 推荐系统
+
+推荐使用：
+
+```text
+Ubuntu 22.04
+Ubuntu 24.04
+Debian 11
+Debian 12
+```
 
 ---
 
@@ -331,29 +362,11 @@ SS2022 卸载时只删除容器，不会卸载 Docker 本身。
 
 ---
 
-## 推荐系统
-
-推荐使用：
-
-```text
-Ubuntu 22.04
-Ubuntu 24.04
-Debian 11
-Debian 12
-```
-
----
-
 ## 项目定位
 
 本脚本适合个人 VPS 快速部署代理节点，用于测试、学习、网络环境管理和自用节点维护。
 
 请遵守当地法律法规和服务商使用条款。
 
-````
-
-最后你 GitHub 仓库简介可以这样写：
-
-```text
-Ubuntu/Debian VPS 一键部署 SOCKS5、SS2022、VLESS Reality Vision TCP 三合一代理脚本，支持自动节点命名、绿色二维码、BBR、上海时间和状态管理。
-````
+```
+```
