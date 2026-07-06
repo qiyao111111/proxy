@@ -1,40 +1,48 @@
-# Proxy 一键三合一脚本
+下面是更新后的 **README.md 一键复制版**，已经把项目从三合一改成 **四合一**，加入了 **Hysteria2 / HY2**，并补充了 HY2 的 UDP、安全组、自签证书、权限说明。
 
-一个适用于 Ubuntu / Debian VPS 的代理协议一键部署脚本，支持：
+直接复制到 GitHub 的 `README.md`。
+
+````markdown
+# Proxy 四合一一键脚本
+
+一个适用于 Ubuntu / Debian VPS 的代理协议一键部署与管理脚本，支持：
 
 - SOCKS5 / SK5
 - SS2022
 - VLESS + Reality + Vision + TCP
+- Hysteria2 / HY2
 
 脚本支持自动安装、自动生成配置、自动放行端口、自动设置上海时间、自动开启 BBR、自动识别 IP 地区，并生成可直接导入客户端的分享链接和绿色二维码。
 
 ---
 
-## 功能特点
+## 项目特点
 
-### 支持协议
+- 一键部署四种常用代理协议
+- 支持随机端口，端口范围：`10000-65535`
+- 支持自定义端口、账号、密码、密钥、SNI、节点名
+- 自动安装基础依赖
+- 自动安装 Docker
+- 自动安装 Xray Core
+- 自动安装 Hysteria2
+- 自动设置系统时区为 `Asia/Shanghai`
+- 自动开启 BBR
+- 自动通过 `ipinfo.io` 识别服务器 IP 地区
+- 自动生成统一格式节点名称
+- 自动生成分享链接
+- 自动生成绿色二维码
+- 支持查看状态、重启、卸载
+
+---
+
+## 支持协议
 
 | 协议 | 说明 |
 |---|---|
 | SOCKS5 / SK5 | 基于 Dante Server，支持用户名和密码认证 |
 | SS2022 | 基于 shadowsocks-rust，使用 Docker 部署 |
 | VLESS Reality | 基于 Xray Core，Reality + Vision + TCP |
-
----
-
-## 已集成功能
-
-- 随机端口范围：`10000-65535`
-- 支持自定义端口、账号、密码、密钥
-- 自动安装基础依赖
-- 自动安装 Docker
-- 自动安装 Xray Core
-- 自动开启 BBR
-- 自动设置系统时区为 `Asia/Shanghai`
-- 自动识别服务器 IP、国家、地区、城市
-- 自动生成分享链接
-- 自动生成绿色二维码
-- 支持查看状态、重启、卸载
+| Hysteria2 / HY2 | 基于 Hysteria2，支持 UDP 加速和 salamander 混淆 |
 
 ---
 
@@ -44,6 +52,7 @@
 
 ```text
 https://ipinfo.io/json
+````
 
 自动识别服务器出口 IP 的：
 
@@ -68,7 +77,7 @@ US-California-LosAngeles-69.63.203.61
 JP-Tokyo-Tokyo-xxx.xxx.xxx.xxx
 ```
 
-三个协议统一使用相同命名格式，不额外添加 `SOCKS5`、`SS2022`、`VLESS` 前缀。
+四个协议统一使用相同命名格式，不额外添加 `SOCKS5`、`SS2022`、`VLESS`、`HY2` 前缀。
 
 ---
 
@@ -89,18 +98,22 @@ bash <(curl -fsSL https://raw.githubusercontent.com/qiyao111111/proxy/main/proxy
 1) 安装 / 重装 SOCKS5 / SK5
 2) 安装 / 重装 SS2022
 3) 安装 / 重装 VLESS + Reality + Vision
+4) 安装 / 重装 Hysteria2 / HY2
 
-4) 查看 SOCKS5 / SK5 状态
-5) 查看 SS2022 状态
-6) 查看 VLESS Reality 状态
+5) 查看 SOCKS5 / SK5 状态
+6) 查看 SS2022 状态
+7) 查看 VLESS Reality 状态
+8) 查看 Hysteria2 / HY2 状态
 
-7) 重启 SOCKS5 / SK5
-8) 重启 SS2022
-9) 重启 VLESS Reality
+9) 重启 SOCKS5 / SK5
+10) 重启 SS2022
+11) 重启 VLESS Reality
+12) 重启 Hysteria2 / HY2
 
-10) 卸载 SOCKS5 / SK5
-11) 卸载 SS2022
-12) 卸载 VLESS Reality
+13) 卸载 SOCKS5 / SK5
+14) 卸载 SS2022
+15) 卸载 VLESS Reality
+16) 卸载 Hysteria2 / HY2
 ```
 
 ---
@@ -202,6 +215,45 @@ vless://xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx@78.105.182.181:55661?encryption=non
 
 ---
 
+## 安装 Hysteria2 / HY2
+
+运行脚本后选择：
+
+```text
+4
+```
+
+安装模式：
+
+```text
+1) 自定义端口 / 密码 / SNI / 节点名称
+2) 随机端口 / 随机密码 / 默认 SNI / 自动节点名
+```
+
+默认参数：
+
+```text
+SNI：bing.com
+TLS：自签证书
+认证方式：password
+混淆：salamander
+传输特点：主要依赖 UDP
+```
+
+安装完成后会输出：
+
+```text
+hysteria2://密码@服务器IP:端口?sni=bing.com&insecure=1&obfs=salamander&obfs-password=混淆密码#节点名称
+```
+
+示例：
+
+```text
+hysteria2://password@78.105.182.181:41847?sni=bing.com&insecure=1&obfs=salamander&obfs-password=obfspassword#TW-Taiwan-Taipei-78.105.182.181
+```
+
+---
+
 ## 二维码
 
 安装完成后，脚本会自动生成绿色二维码。
@@ -219,7 +271,7 @@ vless://xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx@78.105.182.181:55661?encryption=non
 
 如果 VPS 服务商有云防火墙 / 安全组，需要手动放行对应端口。
 
-### Reality
+### VLESS Reality
 
 只需要放行：
 
@@ -234,6 +286,22 @@ TCP 端口
 ```text
 TCP + UDP 端口
 ```
+
+### Hysteria2 / HY2
+
+必须放行：
+
+```text
+TCP + UDP 端口
+```
+
+其中最重要的是：
+
+```text
+UDP 端口
+```
+
+Hysteria2 主要依赖 UDP，如果云后台安全组没有放行 UDP，脚本即使安装成功，客户端也可能无法连接。
 
 ---
 
@@ -273,6 +341,13 @@ docker ps -a
 docker logs ss2022-server
 ```
 
+查看 Hysteria2 状态：
+
+```bash
+systemctl status hysteria-server.service
+journalctl -u hysteria-server.service -n 80 --no-pager
+```
+
 查看监听端口：
 
 ```bash
@@ -291,6 +366,40 @@ sysctl net.core.default_qdisc
 ```bash
 timedatectl
 date
+```
+
+---
+
+## Hysteria2 权限说明
+
+Hysteria2 官方安装脚本会创建 `hysteria` 系统用户。
+
+本项目会自动修复以下文件权限：
+
+```text
+/etc/hysteria/config.yaml
+/etc/hysteria/server.crt
+/etc/hysteria/server.key
+```
+
+如果遇到类似错误：
+
+```text
+tls.key: open /etc/hysteria/server.key: permission denied
+```
+
+可以手动执行：
+
+```bash
+chown -R hysteria:hysteria /etc/hysteria
+chmod 755 /etc/hysteria
+chmod 644 /etc/hysteria/config.yaml
+chmod 644 /etc/hysteria/server.crt
+chmod 644 /etc/hysteria/server.key
+
+systemctl daemon-reload
+systemctl restart hysteria-server.service
+systemctl status hysteria-server.service --no-pager
 ```
 
 ---
@@ -315,6 +424,7 @@ date
 * dante-server
 * docker
 * xray-core
+* hysteria2
 
 ---
 
@@ -337,14 +447,21 @@ Debian 12
 2. 随机端口不会低于 `10000`。
 3. 如果客户端连接失败，优先检查 VPS 云后台安全组。
 4. Reality 对系统时间比较敏感，脚本会自动设置上海时间并开启 NTP。
-5. BBR 是网络优化，不是换线路；如果 VPS 线路本身很差，BBR 不能完全解决延迟问题。
-6. Reality 服务端配置文件包含私钥，请不要公开：
+5. Hysteria2 主要依赖 UDP，必须确认 UDP 端口已经放行。
+6. BBR 是网络优化，不是换线路；如果 VPS 线路本身很差，BBR 不能完全解决延迟问题。
+7. Reality 服务端配置文件包含私钥，请不要公开：
 
 ```text
 /usr/local/etc/xray/config.json
 ```
 
-7. 分享链接和二维码请妥善保存，不要公开泄露。
+8. Hysteria2 配置文件包含密码和混淆密码，请不要公开：
+
+```text
+/etc/hysteria/config.yaml
+```
+
+9. 分享链接和二维码请妥善保存，不要公开泄露。
 
 ---
 
@@ -353,9 +470,10 @@ Debian 12
 运行脚本后选择对应卸载菜单：
 
 ```text
-10) 卸载 SOCKS5 / SK5
-11) 卸载 SS2022
-12) 卸载 VLESS Reality
+13) 卸载 SOCKS5 / SK5
+14) 卸载 SS2022
+15) 卸载 VLESS Reality
+16) 卸载 Hysteria2 / HY2
 ```
 
 SS2022 卸载时只删除容器，不会卸载 Docker 本身。
@@ -368,5 +486,10 @@ SS2022 卸载时只删除容器，不会卸载 Docker 本身。
 
 请遵守当地法律法规和服务商使用条款。
 
-```
-```
+````
+
+GitHub 仓库简介可以更新成：
+
+```text
+Ubuntu/Debian VPS 一键部署 SOCKS5、SS2022、VLESS Reality Vision TCP、Hysteria2 四合一代理脚本，支持自动节点命名、绿色二维码、BBR、上海时间和状态管理。
+````
