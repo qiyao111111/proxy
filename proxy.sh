@@ -67,6 +67,7 @@ check_system() {
 install_base_packages() {
   echo ""
   echo "正在安装基础依赖..."
+
   apt update -y
   apt install -y curl wget unzip socat cron ufw net-tools iproute2 procps openssl ca-certificates qrencode jq
 }
@@ -74,6 +75,7 @@ install_base_packages() {
 set_shanghai_time() {
   echo ""
   echo "正在设置系统时区为 Asia/Shanghai..."
+
   timedatectl set-timezone Asia/Shanghai 2>/dev/null || true
   timedatectl set-ntp true 2>/dev/null || true
 
@@ -121,6 +123,7 @@ install_docker() {
 install_xray() {
   echo ""
   echo "正在安装 / 更新 Xray Core..."
+
   bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
 
   if [ ! -f "$XRAY_BIN" ]; then
@@ -134,6 +137,7 @@ install_xray() {
 install_hysteria_core() {
   echo ""
   echo "正在安装 / 更新 Hysteria2..."
+
   bash <(curl -fsSL https://get.hy2.sh/)
 
   if [ ! -f "$HY2_BIN" ]; then
@@ -147,6 +151,7 @@ install_hysteria_core() {
 random_port() {
   while true; do
     PORT=$(shuf -i ${RANDOM_PORT_MIN}-${RANDOM_PORT_MAX} -n 1)
+
     if ! ss -lntup | grep -q ":$PORT "; then
       echo "$PORT"
       return
@@ -925,7 +930,23 @@ uninstall_reality() {
   echo "Xray Reality 已卸载"
 }
 
+fix_hy2_permissions() {
+  mkdir -p /etc/hysteria
+
+  if id hysteria >/dev/null 2>&1; then
+    chown -R hysteria:hysteria /etc/hysteria
+  fi
+
+  chmod 755 /etc/hysteria 2>/dev/null || true
+  chmod 644 "$HY2_CONFIG" 2>/dev/null || true
+  chmod 644 "$HY2_CERT" 2>/dev/null || true
+  chmod 600 "$HY2_KEY" 2>/dev/null || true
+}
+
 generate_hy2_cert() {
+  echo ""
+  echo "正在生成 Hysteria2 自签证书..."
+
   mkdir -p /etc/hysteria
 
   openssl req -x509 -nodes -newkey rsa:2048 \
@@ -938,9 +959,16 @@ generate_hy2_cert() {
     echo "错误：Hysteria2 证书生成失败"
     exit 1
   fi
+
+  fix_hy2_permissions
+
+  echo "Hysteria2 证书生成完成，权限已修复"
 }
 
 write_hy2_config() {
+  echo ""
+  echo "正在写入 Hysteria2 配置..."
+
   mkdir -p /etc/hysteria
 
   cat > "$HY2_CONFIG" <<EOF
@@ -965,9 +993,19 @@ masquerade:
     url: https://www.bing.com
     rewriteHost: true
 EOF
+
+  fix_hy2_permissions
+
+  echo "Hysteria2 配置写入完成，权限已修复"
 }
 
 start_hy2() {
+  echo ""
+  echo "正在启动 Hysteria2..."
+
+  fix_hy2_permissions
+
+  systemctl daemon-reload
   systemctl restart "$HY2_SERVICE"
   systemctl enable "$HY2_SERVICE" >/dev/null 2>&1 || true
 
@@ -976,8 +1014,8 @@ start_hy2() {
   if systemctl is-active --quiet "$HY2_SERVICE"; then
     echo "Hysteria2 启动成功"
   else
-    echo "错误：Hysteria2 启动失败"
-    journalctl -u "$HY2_SERVICE" -n 80 --no-pager
+    echo "错误：Hysteria2 启动失败，请查看日志："
+    journalctl -u "$HY2_SERVICE" -n 100 --no-pager
     exit 1
   fi
 }
@@ -1020,6 +1058,7 @@ install_hy2() {
 
   generate_hy2_cert
   write_hy2_config
+  fix_hy2_permissions
   open_firewall_tcp_udp "$HY2_PORT"
   start_hy2
 
@@ -1083,6 +1122,7 @@ status_hy2() {
 
   echo ""
   echo "配置文件路径：$HY2_CONFIG"
+
   if [ -f "$HY2_CONFIG" ]; then
     echo ""
     cat "$HY2_CONFIG"
@@ -1092,13 +1132,15 @@ status_hy2() {
 }
 
 restart_hy2() {
+  fix_hy2_permissions
+  systemctl daemon-reload
   systemctl restart "$HY2_SERVICE"
 
   if systemctl is-active --quiet "$HY2_SERVICE"; then
     echo "Hysteria2 重启成功"
   else
     echo "Hysteria2 重启失败"
-    journalctl -u "$HY2_SERVICE" -n 80 --no-pager
+    journalctl -u "$HY2_SERVICE" -n 100 --no-pager
   fi
 }
 
