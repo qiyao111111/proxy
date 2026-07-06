@@ -316,9 +316,14 @@ show_qrcode() {
     echo ""
     echo "请用手机代理软件扫码导入："
     echo ""
-    echo -e "\033[32m"
-    echo "$QR_CONTENT" | qrencode -t ANSIUTF8 -m 2
-    echo -e "\033[0m"
+
+    # 绿色清晰版二维码
+    # 注意：不要使用 ANSIUTF8，它会自带颜色，导致外层绿色失效。
+    # 使用 UTF8 后，终端绿色转义才能正常生效。
+    printf '\033[1;32m'
+    echo "$QR_CONTENT" | qrencode -t UTF8 -m 2
+    printf '\033[0m'
+
     echo ""
     echo "如果二维码不完整，请放大终端窗口，或复制链接导入。"
   else
