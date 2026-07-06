@@ -1,6 +1,9 @@
 #!/bin/bash
 
-set -e
+set -Ee
+set -o pipefail
+
+trap 'echo ""; echo "错误：脚本在第 $LINENO 行执行失败，请检查上方日志或重新运行。"; exit 1' ERR
 
 RANDOM_PORT_MIN=10000
 RANDOM_PORT_MAX=65535
@@ -25,6 +28,12 @@ HY2_CONFIG="/etc/hysteria/config.yaml"
 HY2_CERT="/etc/hysteria/server.crt"
 HY2_KEY="/etc/hysteria/server.key"
 DEFAULT_HY2_SNI="bing.com"
+
+CURL_RETRY_OPTS=(--fail --show-error --location --retry 3 --retry-delay 2 --connect-timeout 10)
+
+download_to_stdout() {
+  curl "${CURL_RETRY_OPTS[@]}" "$1"
+}
 
 clear
 echo "======================================"
@@ -68,6 +77,7 @@ install_base_packages() {
   echo ""
   echo "正在安装基础依赖..."
 
+  export DEBIAN_FRONTEND=noninteractive
   apt update -y
   apt install -y curl wget unzip socat cron ufw net-tools iproute2 procps openssl ca-certificates qrencode jq
 }
@@ -113,7 +123,7 @@ install_docker() {
     echo "Docker 已安装"
   else
     echo "正在安装 Docker..."
-    curl -fsSL https://get.docker.com | bash
+    download_to_stdout https://get.docker.com | bash
   fi
 
   systemctl enable docker >/dev/null 2>&1 || true
@@ -124,7 +134,7 @@ install_xray() {
   echo ""
   echo "正在安装 / 更新 Xray Core..."
 
-  bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
+  bash -c "$(download_to_stdout https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
 
   if [ ! -f "$XRAY_BIN" ]; then
     echo "错误：Xray 安装失败，未找到 $XRAY_BIN"
@@ -138,7 +148,7 @@ install_hysteria_core() {
   echo ""
   echo "正在安装 / 更新 Hysteria2..."
 
-  bash <(curl -fsSL https://get.hy2.sh/)
+  bash <(download_to_stdout https://get.hy2.sh/)
 
   if [ ! -f "$HY2_BIN" ]; then
     echo "错误：Hysteria2 安装失败，未找到 $HY2_BIN"
@@ -930,7 +940,7 @@ uninstall_reality() {
 
   systemctl stop "$XRAY_SERVICE" 2>/dev/null || true
   systemctl disable "$XRAY_SERVICE" 2>/dev/null || true
-  bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ remove --purge || true
+  bash -c "$(download_to_stdout https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ remove --purge || true
 
   echo "Xray Reality 已卸载"
 }
@@ -1161,7 +1171,7 @@ uninstall_hy2() {
   systemctl stop "$HY2_SERVICE" 2>/dev/null || true
   systemctl disable "$HY2_SERVICE" 2>/dev/null || true
 
-  bash <(curl -fsSL https://get.hy2.sh/) --remove || true
+  bash <(download_to_stdout https://get.hy2.sh/) --remove || true
 
   rm -rf /etc/hysteria
 
