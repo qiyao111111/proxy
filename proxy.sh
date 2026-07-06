@@ -2,28 +2,16 @@
 
 set -e
 
-# ============================================================
-# 三合一代理管理脚本
-# SOCKS5 / SK5 + SS2022 + VLESS Reality Vision TCP
-# 随机端口范围：10000-65535
-# 节点命名：国家-地区-城市-IP
-# 支持：上海时间 + BBR + 绿色二维码
-# 适用于 Ubuntu / Debian
-# ============================================================
-
 RANDOM_PORT_MIN=10000
 RANDOM_PORT_MAX=65535
 
-# SOCKS5 / SK5
 SOCKS_CONFIG="/etc/danted.conf"
 SOCKS_SERVICE="danted"
 
-# SS2022
 SS_CONTAINER="ss2022-server"
 SS_IMAGE="ghcr.io/shadowsocks/ssserver-rust:latest"
 SS_METHOD="2022-blake3-aes-128-gcm"
 
-# VLESS Reality
 XRAY_SERVICE="xray"
 XRAY_BIN="/usr/local/bin/xray"
 XRAY_CONFIG="/usr/local/etc/xray/config.json"
@@ -31,15 +19,23 @@ DEFAULT_SNI="www.paypal.com"
 DEFAULT_FP="chrome"
 DEFAULT_NODE_NAME="VLESS-Reality"
 
+HY2_SERVICE="hysteria-server.service"
+HY2_BIN="/usr/local/bin/hysteria"
+HY2_CONFIG="/etc/hysteria/config.yaml"
+HY2_CERT="/etc/hysteria/server.crt"
+HY2_KEY="/etc/hysteria/server.key"
+DEFAULT_HY2_SNI="bing.com"
+
 clear
 echo "======================================"
-echo " 三合一代理一键管理脚本"
+echo " 四合一代理一键管理脚本"
 echo " 1. SOCKS5 / SK5"
 echo " 2. SS2022"
 echo " 3. VLESS + Reality + Vision + TCP"
+echo " 4. Hysteria2 / HY2"
 echo " 随机端口范围：${RANDOM_PORT_MIN}-${RANDOM_PORT_MAX}"
-echo " 支持：绿色二维码 + BBR + 上海时间 + IP地区自动命名"
-echo " 适用于 Ubuntu / Debian"
+echo " 节点命名：国家-地区-城市-IP"
+echo " 支持：绿色二维码 + BBR + 上海时间"
 echo "======================================"
 echo ""
 
@@ -71,7 +67,6 @@ check_system() {
 install_base_packages() {
   echo ""
   echo "正在安装基础依赖..."
-
   apt update -y
   apt install -y curl wget unzip socat cron ufw net-tools iproute2 procps openssl ca-certificates qrencode jq
 }
@@ -79,7 +74,6 @@ install_base_packages() {
 set_shanghai_time() {
   echo ""
   echo "正在设置系统时区为 Asia/Shanghai..."
-
   timedatectl set-timezone Asia/Shanghai 2>/dev/null || true
   timedatectl set-ntp true 2>/dev/null || true
 
@@ -88,17 +82,8 @@ set_shanghai_time() {
     systemctl restart systemd-timesyncd 2>/dev/null || true
   fi
 
-  CURRENT_TIMEZONE=$(timedatectl 2>/dev/null | grep "Time zone" | awk -F': ' '{print $2}' || echo "unknown")
-  CURRENT_TIME=$(date "+%Y-%m-%d %H:%M:%S")
-
-  echo "当前时区：$CURRENT_TIMEZONE"
-  echo "当前时间：$CURRENT_TIME"
-
-  if timedatectl 2>/dev/null | grep -q "Asia/Shanghai"; then
-    echo "上海时间设置成功"
-  else
-    echo "提醒：时区设置可能未成功，请手动检查：timedatectl"
-  fi
+  echo "当前时间：$(date "+%Y-%m-%d %H:%M:%S")"
+  timedatectl 2>/dev/null | grep "Time zone" || true
 }
 
 enable_bbr() {
@@ -119,12 +104,6 @@ EOF
 
   echo "当前拥塞控制算法：$CURRENT_CC"
   echo "当前队列算法：$CURRENT_QDISC"
-
-  if [ "$CURRENT_CC" = "bbr" ]; then
-    echo "BBR 已成功开启"
-  else
-    echo "提醒：BBR 未成功开启，可能是内核或 VPS 限制"
-  fi
 }
 
 install_docker() {
@@ -142,7 +121,6 @@ install_docker() {
 install_xray() {
   echo ""
   echo "正在安装 / 更新 Xray Core..."
-
   bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
 
   if [ ! -f "$XRAY_BIN" ]; then
@@ -151,6 +129,19 @@ install_xray() {
   fi
 
   echo "Xray 安装完成：$($XRAY_BIN version | head -n 1)"
+}
+
+install_hysteria_core() {
+  echo ""
+  echo "正在安装 / 更新 Hysteria2..."
+  bash <(curl -fsSL https://get.hy2.sh/)
+
+  if [ ! -f "$HY2_BIN" ]; then
+    echo "错误：Hysteria2 安装失败，未找到 $HY2_BIN"
+    exit 1
+  fi
+
+  echo "Hysteria2 安装完成：$($HY2_BIN version 2>/dev/null | head -n 1 || echo installed)"
 }
 
 random_port() {
@@ -276,7 +267,7 @@ open_firewall_tcp() {
     iptables -I INPUT -p tcp --dport "$PORT_TO_OPEN" -j ACCEPT 2>/dev/null || true
   fi
 
-  echo "提醒：如果 VPS 云后台有安全组，也要手动放行 TCP $PORT_TO_OPEN"
+  echo "提醒：云后台安全组也要放行 TCP $PORT_TO_OPEN"
 }
 
 open_firewall_tcp_udp() {
@@ -295,7 +286,7 @@ open_firewall_tcp_udp() {
     iptables -I INPUT -p udp --dport "$PORT_TO_OPEN" -j ACCEPT 2>/dev/null || true
   fi
 
-  echo "提醒：如果 VPS 云后台有安全组，也要手动放行 TCP/UDP $PORT_TO_OPEN"
+  echo "提醒：云后台安全组也要放行 TCP/UDP $PORT_TO_OPEN"
 }
 
 get_default_interface() {
@@ -320,13 +311,11 @@ show_qrcode() {
     echo ""
     echo "请用手机代理软件扫码导入："
     echo ""
-
     echo -e "\033[32m"
     echo "$QR_CONTENT" | qrencode -t ANSIUTF8 -m 2
     echo -e "\033[0m"
-
     echo ""
-    echo "如果二维码太大或显示不完整，请放大终端窗口后重新运行。"
+    echo "如果二维码不完整，请放大终端窗口，或复制链接导入。"
   else
     echo "未安装 qrencode，无法显示二维码"
   fi
@@ -355,15 +344,15 @@ show_common_status() {
   timedatectl 2>/dev/null | grep "NTP service" || true
 }
 
-# ============================================================
-# SOCKS5 / SK5
-# ============================================================
-
-install_socks5() {
+prepare_env() {
   check_system
   install_base_packages
   set_shanghai_time
   enable_bbr
+}
+
+install_socks5() {
+  prepare_env
 
   echo ""
   echo "正在安装 Dante SOCKS5..."
@@ -378,15 +367,16 @@ install_socks5() {
   echo "2) 随机端口 / 随机账号 / 随机密码 / 自动节点名"
   echo ""
 
-  read -p "请输入选项 [1/2]，默认 2: " MODE
+  read -r -p "请输入选项 [1/2]，默认 2: " MODE
+  MODE=$(echo "$MODE" | tr -d '\r' | xargs)
   MODE=${MODE:-2}
 
   if [ "$MODE" = "1" ]; then
-    read -p "请输入 SOCKS5 端口，必须 >=10000: " SOCKS_PORT
-    read -p "请输入 SOCKS5 用户名: " SOCKS_USER
+    read -r -p "请输入 SOCKS5 端口，必须 >=10000: " SOCKS_PORT
+    read -r -p "请输入 SOCKS5 用户名: " SOCKS_USER
     read -s -p "请输入 SOCKS5 密码: " SOCKS_PASS
     echo ""
-    read -p "请输入节点名称，默认 $DEFAULT_SOCKS_NAME: " NODE_NAME
+    read -r -p "请输入节点名称，默认 $DEFAULT_SOCKS_NAME: " NODE_NAME
 
     NODE_NAME=${NODE_NAME:-$DEFAULT_SOCKS_NAME}
   else
@@ -403,9 +393,6 @@ install_socks5() {
 
   validate_port "$SOCKS_PORT"
 
-  echo ""
-  echo "正在创建 SOCKS5 用户..."
-
   if id "$SOCKS_USER" >/dev/null 2>&1; then
     echo "用户已存在，正在更新密码"
   else
@@ -415,9 +402,6 @@ install_socks5() {
   echo "$SOCKS_USER:$SOCKS_PASS" | chpasswd
 
   INTERFACE=$(get_default_interface)
-
-  echo "检测到默认网卡：$INTERFACE"
-  echo "正在写入 Dante 配置..."
 
   cat > "$SOCKS_CONFIG" <<CONFIG
 logoutput: syslog
@@ -444,8 +428,6 @@ CONFIG
 
   open_firewall_tcp_udp "$SOCKS_PORT"
 
-  echo ""
-  echo "正在启动 Dante..."
   systemctl restart "$SOCKS_SERVICE"
   systemctl enable "$SOCKS_SERVICE" >/dev/null 2>&1 || true
 
@@ -482,17 +464,8 @@ CONFIG
   echo "SOCKS5 绿色二维码："
   show_qrcode "$SOCKS_URL"
   echo ""
-  echo "Shadowrocket / Clash 手动填写："
-  echo "类型：SOCKS5"
-  echo "服务器：$IP"
-  echo "端口：$SOCKS_PORT"
-  echo "用户名：$SOCKS_USER"
-  echo "密码：$SOCKS_PASS"
-  echo ""
   echo "测试命令："
   echo "curl -x socks5://$SOCKS_USER:$SOCKS_PASS@$IP:$SOCKS_PORT https://ipinfo.io"
-  echo ""
-  echo "开机自启：已开启"
   echo "======================================"
 }
 
@@ -519,7 +492,6 @@ status_socks5() {
 }
 
 restart_socks5() {
-  echo "正在重启 SOCKS5..."
   systemctl restart "$SOCKS_SERVICE"
 
   if systemctl is-active --quiet "$SOCKS_SERVICE"; then
@@ -532,7 +504,7 @@ restart_socks5() {
 
 uninstall_socks5() {
   echo "警告：即将卸载 SOCKS5 / SK5"
-  read -p "确认卸载吗？输入 y 确认: " CONFIRM
+  read -r -p "确认卸载吗？输入 y 确认: " CONFIRM
 
   if [ "$CONFIRM" != "y" ]; then
     echo "已取消卸载"
@@ -547,15 +519,8 @@ uninstall_socks5() {
   echo "SOCKS5 / SK5 已卸载"
 }
 
-# ============================================================
-# SS2022
-# ============================================================
-
 install_ss2022() {
-  check_system
-  install_base_packages
-  set_shanghai_time
-  enable_bbr
+  prepare_env
   install_docker
 
   generate_node_name_by_ipinfo
@@ -567,20 +532,16 @@ install_ss2022() {
   echo "2) 随机端口 / 随机密钥 / 自动节点名"
   echo ""
 
-  read -p "请输入选项 [1/2]，默认 2: " MODE
+  read -r -p "请输入选项 [1/2]，默认 2: " MODE
+  MODE=$(echo "$MODE" | tr -d '\r' | xargs)
   MODE=${MODE:-2}
 
   if [ "$MODE" = "1" ]; then
-    read -p "请输入 SS2022 端口，必须 >=10000: " SS_PORT
-    echo ""
-    echo "如果你不懂密钥，直接回车，让脚本自动生成。"
-    read -p "请输入自定义密钥，留空则自动生成: " SS_KEY
-    read -p "请输入节点名称，默认 $DEFAULT_SS_NAME: " NODE_NAME
+    read -r -p "请输入 SS2022 端口，必须 >=10000: " SS_PORT
+    read -r -p "请输入自定义密钥，留空则自动生成: " SS_KEY
+    read -r -p "请输入节点名称，默认 $DEFAULT_SS_NAME: " NODE_NAME
 
-    if [ -z "$SS_KEY" ]; then
-      SS_KEY=$(random_key)
-    fi
-
+    SS_KEY=${SS_KEY:-$(random_key)}
     NODE_NAME=${NODE_NAME:-$DEFAULT_SS_NAME}
   else
     SS_PORT=$(random_port)
@@ -588,26 +549,15 @@ install_ss2022() {
     NODE_NAME="$DEFAULT_SS_NAME"
   fi
 
-  if [ -z "$SS_PORT" ] || [ -z "$SS_KEY" ]; then
-    echo "错误：端口和密钥不能为空"
-    exit 1
-  fi
-
   validate_port "$SS_PORT"
   open_firewall_tcp_udp "$SS_PORT"
 
-  echo ""
-  echo "正在拉取 Shadowsocks-Rust 镜像..."
   docker pull "$SS_IMAGE"
 
   if docker ps -a --format '{{.Names}}' | grep -q "^${SS_CONTAINER}$"; then
-    echo "检测到旧 SS2022 容器，正在删除..."
     docker stop "$SS_CONTAINER" >/dev/null 2>&1 || true
     docker rm "$SS_CONTAINER" >/dev/null 2>&1 || true
   fi
-
-  echo ""
-  echo "正在启动 SS2022..."
 
   docker run -d \
     --name "$SS_CONTAINER" \
@@ -656,13 +606,6 @@ install_ss2022() {
   echo "SS2022 绿色二维码："
   show_qrcode "$SS_URL"
   echo ""
-  echo "Shadowrocket 手动填写："
-  echo "类型：Shadowsocks"
-  echo "服务器：$IP"
-  echo "端口：$SS_PORT"
-  echo "加密方式：$SS_METHOD"
-  echo "密码：$SS_KEY"
-  echo ""
   echo "Mihomo / Clash Meta 配置："
   echo "- name: $NODE_NAME"
   echo "  type: ss"
@@ -671,8 +614,6 @@ install_ss2022() {
   echo "  cipher: $SS_METHOD"
   echo "  password: $SS_KEY"
   echo "  udp: true"
-  echo ""
-  echo "开机自启：已开启"
   echo "======================================"
 }
 
@@ -689,7 +630,6 @@ status_ss2022() {
   if docker ps -a --format '{{.Names}}' | grep -q "^${SS_CONTAINER}$"; then
     docker ps -a | grep "$SS_CONTAINER" || true
     echo ""
-    echo "最近日志："
     docker logs --tail 50 "$SS_CONTAINER" || true
   else
     echo "未找到 SS2022 容器"
@@ -704,14 +644,13 @@ restart_ss2022() {
     return
   fi
 
-  echo "正在重启 SS2022..."
   docker restart "$SS_CONTAINER"
   echo "SS2022 重启完成"
 }
 
 uninstall_ss2022() {
   echo "警告：即将卸载 SS2022"
-  read -p "确认卸载吗？输入 y 确认: " CONFIRM
+  read -r -p "确认卸载吗？输入 y 确认: " CONFIRM
 
   if [ "$CONFIRM" != "y" ]; then
     echo "已取消卸载"
@@ -726,22 +665,13 @@ uninstall_ss2022() {
   echo "SS2022 容器已卸载，Docker 本身未卸载。"
 }
 
-# ============================================================
-# VLESS + Reality + Vision + TCP
-# ============================================================
-
 generate_uuid() {
-  echo ""
-  echo "正在生成 UUID..."
-
   UUID=$($XRAY_BIN uuid 2>&1 | tr -d '[:space:]')
 
   if [ -z "$UUID" ]; then
     echo "错误：UUID 生成失败"
     exit 1
   fi
-
-  echo "UUID 生成成功"
 }
 
 generate_reality_keys() {
@@ -758,20 +688,9 @@ generate_reality_keys() {
 
   if [ -z "$PRIVATE_KEY" ] || [ -z "$PUBLIC_KEY" ]; then
     echo "错误：Reality 密钥生成失败"
-    echo ""
-    echo "Xray 原始输出如下："
     echo "$KEY_OUTPUT"
-    echo ""
-    echo "解析结果："
-    echo "PRIVATE_KEY=$PRIVATE_KEY"
-    echo "PUBLIC_KEY=$PUBLIC_KEY"
-    echo ""
-    echo "请手动执行排查："
-    echo "$XRAY_BIN x25519"
     exit 1
   fi
-
-  echo "Reality 密钥生成成功"
 }
 
 backup_old_xray_config() {
@@ -784,11 +703,7 @@ backup_old_xray_config() {
 
 write_xray_config() {
   mkdir -p /usr/local/etc/xray
-
   backup_old_xray_config
-
-  echo ""
-  echo "正在写入 Xray Reality 配置..."
 
   cat > "$XRAY_CONFIG" <<EOF
 {
@@ -852,11 +767,8 @@ EOF
 }
 
 test_xray_config() {
-  echo ""
-  echo "正在检测 Xray 配置..."
-
   if "$XRAY_BIN" run -test -config "$XRAY_CONFIG"; then
-    echo "配置检测通过"
+    echo "Xray 配置检测通过"
   else
     echo "错误：Xray 配置检测失败"
     exit 1
@@ -864,9 +776,6 @@ test_xray_config() {
 }
 
 start_xray() {
-  echo ""
-  echo "正在启动 Xray..."
-
   systemctl restart "$XRAY_SERVICE"
   systemctl enable "$XRAY_SERVICE" >/dev/null 2>&1 || true
 
@@ -875,19 +784,15 @@ start_xray() {
   if systemctl is-active --quiet "$XRAY_SERVICE"; then
     echo "Xray 启动成功"
   else
-    echo "错误：Xray 启动失败，请查看日志："
+    echo "错误：Xray 启动失败"
     journalctl -u "$XRAY_SERVICE" -n 80 --no-pager
     exit 1
   fi
 }
 
 install_reality() {
-  check_system
-  install_base_packages
-  set_shanghai_time
-  enable_bbr
+  prepare_env
   install_xray
-
   generate_node_name_by_ipinfo
 
   echo ""
@@ -896,14 +801,15 @@ install_reality() {
   echo "2) 随机端口 / 默认 SNI / 自动节点名"
   echo ""
 
-  read -p "请输入选项 [1/2]，默认 2: " MODE
+  read -r -p "请输入选项 [1/2]，默认 2: " MODE
+  MODE=$(echo "$MODE" | tr -d '\r' | xargs)
   MODE=${MODE:-2}
 
   if [ "$MODE" = "1" ]; then
-    read -p "请输入 VLESS 端口，必须 >=10000，例如 31566: " VLESS_PORT
-    read -p "请输入 SNI 域名，默认 $DEFAULT_SNI: " SNI_DOMAIN
-    read -p "请输入浏览器指纹，默认 $DEFAULT_FP: " FINGERPRINT
-    read -p "请输入节点名称，默认 $AUTO_NODE_NAME: " NODE_NAME
+    read -r -p "请输入 VLESS 端口，必须 >=10000: " VLESS_PORT
+    read -r -p "请输入 SNI 域名，默认 $DEFAULT_SNI: " SNI_DOMAIN
+    read -r -p "请输入浏览器指纹，默认 $DEFAULT_FP: " FINGERPRINT
+    read -r -p "请输入节点名称，默认 $AUTO_NODE_NAME: " NODE_NAME
 
     SNI_DOMAIN=${SNI_DOMAIN:-$DEFAULT_SNI}
     FINGERPRINT=${FINGERPRINT:-$DEFAULT_FP}
@@ -919,7 +825,6 @@ install_reality() {
 
   generate_uuid
   generate_reality_keys
-
   SHORT_ID=$(random_short_id)
 
   write_xray_config
@@ -933,11 +838,6 @@ install_reality() {
 
   VLESS_URL="vless://$UUID@$IP:$VLESS_PORT?encryption=none&security=reality&flow=xtls-rprx-vision&type=tcp&sni=$SNI_DOMAIN&pbk=$PUBLIC_KEY&sid=$SHORT_ID&fp=$FINGERPRINT#$NODE_NAME_ENCODED"
 
-  BBR_CC=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo unknown)
-  BBR_QDISC=$(sysctl -n net.core.default_qdisc 2>/dev/null || echo unknown)
-  SYSTEM_TIME=$(date "+%Y-%m-%d %H:%M:%S")
-  SYSTEM_TIMEZONE=$(timedatectl 2>/dev/null | grep "Time zone" | awk -F': ' '{print $2}' || echo unknown)
-
   echo ""
   echo "======================================"
   echo " VLESS + Reality + Vision 安装完成"
@@ -948,39 +848,16 @@ install_reality() {
   echo "识别城市：$IP_CITY"
   echo "端口：$VLESS_PORT"
   echo "UUID：$UUID"
-  echo "协议：VLESS"
-  echo "传输：TCP"
-  echo "安全：Reality"
-  echo "Flow：xtls-rprx-vision"
   echo "SNI：$SNI_DOMAIN"
-  echo "Fingerprint：$FINGERPRINT"
   echo "Public Key：$PUBLIC_KEY"
   echo "Short ID：$SHORT_ID"
   echo "节点名称：$NODE_NAME"
-  echo "BBR 拥塞控制：$BBR_CC"
-  echo "BBR 队列算法：$BBR_QDISC"
-  echo "系统时间：$SYSTEM_TIME"
-  echo "系统时区：$SYSTEM_TIMEZONE"
   echo ""
   echo "VLESS 分享链接："
   echo "$VLESS_URL"
   echo ""
   echo "VLESS 绿色二维码："
   show_qrcode "$VLESS_URL"
-  echo ""
-  echo "Shadowrocket 手动填写："
-  echo "类型：VLESS"
-  echo "服务器：$IP"
-  echo "端口：$VLESS_PORT"
-  echo "UUID：$UUID"
-  echo "加密：none"
-  echo "传输协议：TCP"
-  echo "TLS / 安全：Reality"
-  echo "Flow：xtls-rprx-vision"
-  echo "SNI：$SNI_DOMAIN"
-  echo "Public Key：$PUBLIC_KEY"
-  echo "Short ID：$SHORT_ID"
-  echo "Fingerprint：$FINGERPRINT"
   echo ""
   echo "Mihomo / Clash Meta 配置："
   echo "- name: $NODE_NAME"
@@ -997,22 +874,6 @@ install_reality() {
   echo "  reality-opts:"
   echo "    public-key: $PUBLIC_KEY"
   echo "    short-id: $SHORT_ID"
-  echo ""
-  echo "管理命令："
-  echo "systemctl status xray"
-  echo "systemctl restart xray"
-  echo "systemctl stop xray"
-  echo "journalctl -u xray -n 80 --no-pager"
-  echo ""
-  echo "配置文件：$XRAY_CONFIG"
-  echo "开机自启：已开启"
-  echo ""
-  echo "重要提醒："
-  echo "1. Reality + Vision + TCP 只需要放行 TCP 端口"
-  echo "2. 如果客户端连不上，请检查 VPS 云后台安全组是否放行 TCP $VLESS_PORT"
-  echo "3. 如果二维码不好扫，请放大终端窗口，或者复制 VLESS 分享链接导入"
-  echo "4. 节点地区来自 ipinfo.io，仅供参考，最终以实际出口检测为准"
-  echo "5. BBR 是网络优化，不是换线路；线路本身差，BBR 也救不了全部问题"
   echo "======================================"
 }
 
@@ -1038,7 +899,6 @@ status_reality() {
 }
 
 restart_reality() {
-  echo "正在重启 Xray Reality..."
   systemctl restart "$XRAY_SERVICE"
 
   if systemctl is-active --quiet "$XRAY_SERVICE"; then
@@ -1051,8 +911,7 @@ restart_reality() {
 
 uninstall_reality() {
   echo "警告：即将卸载 Xray Reality"
-  echo "这会删除 Xray 程序和配置文件"
-  read -p "确认卸载吗？输入 y 确认: " CONFIRM
+  read -r -p "确认卸载吗？输入 y 确认: " CONFIRM
 
   if [ "$CONFIRM" != "y" ]; then
     echo "已取消卸载"
@@ -1061,75 +920,251 @@ uninstall_reality() {
 
   systemctl stop "$XRAY_SERVICE" 2>/dev/null || true
   systemctl disable "$XRAY_SERVICE" 2>/dev/null || true
-
   bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ remove --purge || true
 
   echo "Xray Reality 已卸载"
 }
 
-# ============================================================
-# 主菜单
-# ============================================================
+generate_hy2_cert() {
+  mkdir -p /etc/hysteria
+
+  openssl req -x509 -nodes -newkey rsa:2048 \
+    -keyout "$HY2_KEY" \
+    -out "$HY2_CERT" \
+    -subj "/CN=$HY2_SNI" \
+    -days 36500 >/dev/null 2>&1
+
+  if [ ! -f "$HY2_CERT" ] || [ ! -f "$HY2_KEY" ]; then
+    echo "错误：Hysteria2 证书生成失败"
+    exit 1
+  fi
+}
+
+write_hy2_config() {
+  mkdir -p /etc/hysteria
+
+  cat > "$HY2_CONFIG" <<EOF
+listen: :$HY2_PORT
+
+tls:
+  cert: $HY2_CERT
+  key: $HY2_KEY
+
+auth:
+  type: password
+  password: $HY2_PASS
+
+obfs:
+  type: salamander
+  salamander:
+    password: $HY2_OBFS_PASS
+
+masquerade:
+  type: proxy
+  proxy:
+    url: https://www.bing.com
+    rewriteHost: true
+EOF
+}
+
+start_hy2() {
+  systemctl restart "$HY2_SERVICE"
+  systemctl enable "$HY2_SERVICE" >/dev/null 2>&1 || true
+
+  sleep 2
+
+  if systemctl is-active --quiet "$HY2_SERVICE"; then
+    echo "Hysteria2 启动成功"
+  else
+    echo "错误：Hysteria2 启动失败"
+    journalctl -u "$HY2_SERVICE" -n 80 --no-pager
+    exit 1
+  fi
+}
+
+install_hy2() {
+  prepare_env
+  install_hysteria_core
+  generate_node_name_by_ipinfo
+
+  echo ""
+  echo "请选择 Hysteria2 安装模式："
+  echo "1) 自定义端口 / 密码 / SNI / 节点名称"
+  echo "2) 随机端口 / 随机密码 / 默认 SNI / 自动节点名"
+  echo ""
+
+  read -r -p "请输入选项 [1/2]，默认 2: " MODE
+  MODE=$(echo "$MODE" | tr -d '\r' | xargs)
+  MODE=${MODE:-2}
+
+  if [ "$MODE" = "1" ]; then
+    read -r -p "请输入 Hysteria2 端口，必须 >=10000: " HY2_PORT
+    read -r -p "请输入 Hysteria2 密码，留空自动生成: " HY2_PASS
+    read -r -p "请输入 Hysteria2 混淆密码，留空自动生成: " HY2_OBFS_PASS
+    read -r -p "请输入 SNI，默认 $DEFAULT_HY2_SNI: " HY2_SNI
+    read -r -p "请输入节点名称，默认 $AUTO_NODE_NAME: " NODE_NAME
+
+    HY2_PASS=${HY2_PASS:-$(random_pass)}
+    HY2_OBFS_PASS=${HY2_OBFS_PASS:-$(random_pass)}
+    HY2_SNI=${HY2_SNI:-$DEFAULT_HY2_SNI}
+    NODE_NAME=${NODE_NAME:-$AUTO_NODE_NAME}
+  else
+    HY2_PORT=$(random_port)
+    HY2_PASS=$(random_pass)
+    HY2_OBFS_PASS=$(random_pass)
+    HY2_SNI="$DEFAULT_HY2_SNI"
+    NODE_NAME="$AUTO_NODE_NAME"
+  fi
+
+  validate_port "$HY2_PORT"
+
+  generate_hy2_cert
+  write_hy2_config
+  open_firewall_tcp_udp "$HY2_PORT"
+  start_hy2
+
+  get_ipinfo
+  IP="$PUBLIC_IP"
+  url_encode_node_name
+
+  HY2_URL="hysteria2://$HY2_PASS@$IP:$HY2_PORT?sni=$HY2_SNI&insecure=1&obfs=salamander&obfs-password=$HY2_OBFS_PASS#$NODE_NAME_ENCODED"
+
+  echo ""
+  echo "======================================"
+  echo " Hysteria2 / HY2 安装完成"
+  echo "======================================"
+  echo "服务器 IP：$IP"
+  echo "识别国家：$IP_COUNTRY"
+  echo "识别地区：$IP_REGION"
+  echo "识别城市：$IP_CITY"
+  echo "端口：$HY2_PORT"
+  echo "密码：$HY2_PASS"
+  echo "SNI：$HY2_SNI"
+  echo "混淆：salamander"
+  echo "混淆密码：$HY2_OBFS_PASS"
+  echo "节点名称：$NODE_NAME"
+  echo ""
+  echo "Hysteria2 分享链接："
+  echo "$HY2_URL"
+  echo ""
+  echo "Hysteria2 绿色二维码："
+  show_qrcode "$HY2_URL"
+  echo ""
+  echo "Mihomo / Clash Meta 配置："
+  echo "- name: $NODE_NAME"
+  echo "  type: hysteria2"
+  echo "  server: $IP"
+  echo "  port: $HY2_PORT"
+  echo "  password: $HY2_PASS"
+  echo "  sni: $HY2_SNI"
+  echo "  skip-cert-verify: true"
+  echo "  obfs: salamander"
+  echo "  obfs-password: $HY2_OBFS_PASS"
+  echo "  udp: true"
+  echo ""
+  echo "重要提醒：Hysteria2 主要依赖 UDP，云后台安全组必须放行 UDP $HY2_PORT"
+  echo "======================================"
+}
+
+status_hy2() {
+  echo "======================================"
+  echo " Hysteria2 / HY2 状态"
+  echo "======================================"
+
+  systemctl status "$HY2_SERVICE" --no-pager || true
+
+  echo ""
+  echo "监听端口："
+  ss -lntup | grep hysteria || true
+
+  echo ""
+  echo "最近日志："
+  journalctl -u "$HY2_SERVICE" -n 50 --no-pager || true
+
+  echo ""
+  echo "配置文件路径：$HY2_CONFIG"
+  if [ -f "$HY2_CONFIG" ]; then
+    echo ""
+    cat "$HY2_CONFIG"
+  fi
+
+  show_common_status
+}
+
+restart_hy2() {
+  systemctl restart "$HY2_SERVICE"
+
+  if systemctl is-active --quiet "$HY2_SERVICE"; then
+    echo "Hysteria2 重启成功"
+  else
+    echo "Hysteria2 重启失败"
+    journalctl -u "$HY2_SERVICE" -n 80 --no-pager
+  fi
+}
+
+uninstall_hy2() {
+  echo "警告：即将卸载 Hysteria2 / HY2"
+  read -r -p "确认卸载吗？输入 y 确认: " CONFIRM
+
+  if [ "$CONFIRM" != "y" ]; then
+    echo "已取消卸载"
+    exit 0
+  fi
+
+  systemctl stop "$HY2_SERVICE" 2>/dev/null || true
+  systemctl disable "$HY2_SERVICE" 2>/dev/null || true
+
+  bash <(curl -fsSL https://get.hy2.sh/) --remove || true
+
+  rm -rf /etc/hysteria
+
+  echo "Hysteria2 / HY2 已卸载"
+}
 
 main_menu() {
   echo "请选择操作："
   echo "1) 安装 / 重装 SOCKS5 / SK5"
   echo "2) 安装 / 重装 SS2022"
   echo "3) 安装 / 重装 VLESS + Reality + Vision"
+  echo "4) 安装 / 重装 Hysteria2 / HY2"
   echo ""
-  echo "4) 查看 SOCKS5 / SK5 状态"
-  echo "5) 查看 SS2022 状态"
-  echo "6) 查看 VLESS Reality 状态"
+  echo "5) 查看 SOCKS5 / SK5 状态"
+  echo "6) 查看 SS2022 状态"
+  echo "7) 查看 VLESS Reality 状态"
+  echo "8) 查看 Hysteria2 / HY2 状态"
   echo ""
-  echo "7) 重启 SOCKS5 / SK5"
-  echo "8) 重启 SS2022"
-  echo "9) 重启 VLESS Reality"
+  echo "9) 重启 SOCKS5 / SK5"
+  echo "10) 重启 SS2022"
+  echo "11) 重启 VLESS Reality"
+  echo "12) 重启 Hysteria2 / HY2"
   echo ""
-  echo "10) 卸载 SOCKS5 / SK5"
-  echo "11) 卸载 SS2022"
-  echo "12) 卸载 VLESS Reality"
+  echo "13) 卸载 SOCKS5 / SK5"
+  echo "14) 卸载 SS2022"
+  echo "15) 卸载 VLESS Reality"
+  echo "16) 卸载 Hysteria2 / HY2"
   echo ""
 
-  read -p "请输入选项 [1-12]，默认 1: " ACTION
+  read -r -p "请输入选项 [1-16]，默认 1: " ACTION
+  ACTION=$(echo "$ACTION" | tr -d '\r' | xargs)
   ACTION=${ACTION:-1}
 
   case "$ACTION" in
-    1)
-      install_socks5
-      ;;
-    2)
-      install_ss2022
-      ;;
-    3)
-      install_reality
-      ;;
-    4)
-      status_socks5
-      ;;
-    5)
-      status_ss2022
-      ;;
-    6)
-      status_reality
-      ;;
-    7)
-      restart_socks5
-      ;;
-    8)
-      restart_ss2022
-      ;;
-    9)
-      restart_reality
-      ;;
-    10)
-      uninstall_socks5
-      ;;
-    11)
-      uninstall_ss2022
-      ;;
-    12)
-      uninstall_reality
-      ;;
+    1) install_socks5 ;;
+    2) install_ss2022 ;;
+    3) install_reality ;;
+    4) install_hy2 ;;
+    5) status_socks5 ;;
+    6) status_ss2022 ;;
+    7) status_reality ;;
+    8) status_hy2 ;;
+    9) restart_socks5 ;;
+    10) restart_ss2022 ;;
+    11) restart_reality ;;
+    12) restart_hy2 ;;
+    13) uninstall_socks5 ;;
+    14) uninstall_ss2022 ;;
+    15) uninstall_reality ;;
+    16) uninstall_hy2 ;;
     *)
       echo "无效选项"
       exit 1
