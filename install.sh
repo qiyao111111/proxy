@@ -4,10 +4,10 @@ set -Ee
 set -o pipefail
 
 SCRIPT_PATH="/tmp/proxy.sh"
-CACHE_BUSTER="${PROXY_CACHE_BUSTER:-$(date +%s)}"
+RELEASE_REF="${PROXY_RELEASE_REF:-v1.1.0}"
 
 URLS=(
-  "https://cdn.jsdelivr.net/gh/qiyao111111/proxy@main/proxy.sh?cb=${CACHE_BUSTER}"
+  "https://cdn.jsdelivr.net/gh/qiyao111111/proxy@${RELEASE_REF}/proxy.sh"
   "https://raw.githubusercontent.com/qiyao111111/proxy/main/proxy.sh"
 )
 
