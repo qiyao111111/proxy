@@ -1,6 +1,6 @@
 # Proxy 四合一一键脚本
 
-适用于 Ubuntu / Debian VPS 的代理协议一键部署与管理脚本，支持 SOCKS5 / SK5、SS2022、VLESS Reality Vision TCP、Hysteria2 / HY2。
+适用于 Debian / Ubuntu / Alpine VPS 的代理协议一键部署与管理脚本，支持 SOCKS5 / SK5、SS2022、VLESS Reality Vision TCP、Hysteria2 / HY2。
 
 脚本会自动安装依赖、生成配置、放行端口、设置上海时间、开启 BBR、识别 IP 地区，并输出客户端分享链接和绿色二维码。
 
@@ -30,6 +30,8 @@ bash <(curl -fsSL https://cdn.jsdelivr.net/gh/qiyao111111/proxy@main/proxy.sh)
 - 随机端口范围：`10000-65535`
 - 支持自定义端口、账号、密码、密钥、SNI、节点名
 - 自动安装基础依赖、Docker、Xray Core、Hysteria2
+- 自动识别 `apt` / `apk` 包管理器
+- 自动适配 `systemd` / OpenRC 服务管理
 - 自动设置系统时区为 `Asia/Shanghai`
 - 自动开启 BBR
 - 自动通过 `ipinfo.io` 识别服务器出口 IP 地区
@@ -160,12 +162,15 @@ systemctl daemon-reload
 systemctl restart hysteria-server.service
 ```
 
-## 推荐系统
+## 支持系统
 
 - Ubuntu 22.04
 - Ubuntu 24.04
 - Debian 11
 - Debian 12
+- Alpine 3.18+
+
+Debian / Ubuntu 默认使用 `apt + systemd`。Alpine 默认使用 `apk + OpenRC`，脚本会自动切换包安装、服务启动、状态查看和开机自启逻辑。
 
 ## 注意事项
 
@@ -180,4 +185,4 @@ systemctl restart hysteria-server.service
 
 ## 项目简介
 
-Ubuntu/Debian VPS 一键部署 SOCKS5、SS2022、VLESS Reality Vision TCP、Hysteria2 四合一代理脚本，支持自动节点命名、绿色二维码、BBR、上海时间和状态管理。
+Debian/Ubuntu/Alpine VPS 一键部署 SOCKS5、SS2022、VLESS Reality Vision TCP、Hysteria2 四合一代理脚本，支持自动节点命名、绿色二维码、BBR、上海时间和状态管理。

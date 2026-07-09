@@ -10,6 +10,7 @@ RANDOM_PORT_MAX=65535
 
 SOCKS_CONFIG="/etc/danted.conf"
 SOCKS_SERVICE="danted"
+SOCKS_PROCESS_PATTERN="danted|sockd"
 
 SS_CONTAINER="ss2022-server"
 SS_IMAGE="ghcr.io/shadowsocks/ssserver-rust:latest"
@@ -29,10 +30,147 @@ HY2_CERT="/etc/hysteria/server.crt"
 HY2_KEY="/etc/hysteria/server.key"
 DEFAULT_HY2_SNI="bing.com"
 
+OS_NAME=""
+OS_PRETTY=""
+PKG_MANAGER=""
+INIT_SYSTEM=""
+
 CURL_RETRY_OPTS=(--fail --show-error --location --retry 3 --retry-delay 2 --connect-timeout 10)
 
 download_to_stdout() {
   curl "${CURL_RETRY_OPTS[@]}" "$1"
+}
+
+detect_system() {
+  if [ -f /etc/os-release ]; then
+    . /etc/os-release
+    OS_NAME="${ID:-unknown}"
+    OS_PRETTY="${PRETTY_NAME:-$OS_NAME}"
+  else
+    OS_NAME="unknown"
+    OS_PRETTY="unknown"
+  fi
+
+  case "$OS_NAME" in
+    ubuntu|debian)
+      PKG_MANAGER="apt"
+      SOCKS_CONFIG="/etc/danted.conf"
+      SOCKS_SERVICE="danted"
+      SOCKS_PROCESS_PATTERN="danted|sockd"
+      ;;
+    alpine)
+      PKG_MANAGER="apk"
+      SOCKS_CONFIG="/etc/sockd.conf"
+      SOCKS_SERVICE="sockd"
+      SOCKS_PROCESS_PATTERN="sockd|danted"
+      HY2_SERVICE="hysteria-server"
+      ;;
+    *)
+      if command -v apt >/dev/null 2>&1; then
+        PKG_MANAGER="apt"
+      elif command -v apk >/dev/null 2>&1; then
+        PKG_MANAGER="apk"
+      else
+        PKG_MANAGER="unknown"
+      fi
+      ;;
+  esac
+
+  if command -v systemctl >/dev/null 2>&1; then
+    INIT_SYSTEM="systemd"
+  elif command -v rc-service >/dev/null 2>&1; then
+    INIT_SYSTEM="openrc"
+  elif command -v service >/dev/null 2>&1; then
+    INIT_SYSTEM="service"
+  else
+    INIT_SYSTEM="unknown"
+  fi
+}
+
+service_unit_name() {
+  echo "$1" | sed 's/\.service$//'
+}
+
+service_enable() {
+  SERVICE_NAME="$(service_unit_name "$1")"
+
+  case "$INIT_SYSTEM" in
+    systemd) systemctl enable "$1" >/dev/null 2>&1 || true ;;
+    openrc) rc-update add "$SERVICE_NAME" default >/dev/null 2>&1 || true ;;
+  esac
+}
+
+service_restart() {
+  SERVICE_NAME="$(service_unit_name "$1")"
+
+  case "$INIT_SYSTEM" in
+    systemd) systemctl restart "$1" ;;
+    openrc) rc-service "$SERVICE_NAME" restart ;;
+    service) service "$SERVICE_NAME" restart ;;
+    *) echo "错误：无法识别服务管理器，不能重启 $SERVICE_NAME"; return 1 ;;
+  esac
+}
+
+service_stop() {
+  SERVICE_NAME="$(service_unit_name "$1")"
+
+  case "$INIT_SYSTEM" in
+    systemd) systemctl stop "$1" 2>/dev/null || true ;;
+    openrc) rc-service "$SERVICE_NAME" stop 2>/dev/null || true ;;
+    service) service "$SERVICE_NAME" stop 2>/dev/null || true ;;
+  esac
+}
+
+service_disable() {
+  SERVICE_NAME="$(service_unit_name "$1")"
+
+  case "$INIT_SYSTEM" in
+    systemd) systemctl disable "$1" 2>/dev/null || true ;;
+    openrc) rc-update del "$SERVICE_NAME" default 2>/dev/null || true ;;
+  esac
+}
+
+service_is_active() {
+  SERVICE_NAME="$(service_unit_name "$1")"
+
+  case "$INIT_SYSTEM" in
+    systemd) systemctl is-active --quiet "$1" ;;
+    openrc) rc-service "$SERVICE_NAME" status >/dev/null 2>&1 ;;
+    service) service "$SERVICE_NAME" status >/dev/null 2>&1 ;;
+    *) return 1 ;;
+  esac
+}
+
+service_status() {
+  SERVICE_NAME="$(service_unit_name "$1")"
+
+  case "$INIT_SYSTEM" in
+    systemd) systemctl status "$1" --no-pager || true ;;
+    openrc) rc-service "$SERVICE_NAME" status || true ;;
+    service) service "$SERVICE_NAME" status || true ;;
+    *) echo "未找到可用的服务管理器" ;;
+  esac
+}
+
+service_daemon_reload() {
+  if [ "$INIT_SYSTEM" = "systemd" ]; then
+    systemctl daemon-reload
+  fi
+}
+
+service_logs() {
+  SERVICE_NAME="$(service_unit_name "$1")"
+  LOG_LINES="${2:-80}"
+
+  if command -v journalctl >/dev/null 2>&1; then
+    journalctl -u "$1" -n "$LOG_LINES" --no-pager || true
+  elif [ -f /var/log/messages ]; then
+    tail -n "$LOG_LINES" /var/log/messages | grep -E "$SERVICE_NAME|${SERVICE_NAME%.service}" || true
+  elif [ -f /var/log/syslog ]; then
+    tail -n "$LOG_LINES" /var/log/syslog | grep -E "$SERVICE_NAME|${SERVICE_NAME%.service}" || true
+  else
+    echo "未找到 journalctl 或系统日志文件"
+  fi
 }
 
 clear 2>/dev/null || true
@@ -54,40 +192,67 @@ if [ "$(id -u)" != "0" ]; then
   exit 1
 fi
 
+detect_system
+
 check_system() {
-  if [ -f /etc/os-release ]; then
-    . /etc/os-release
-    OS_NAME="$ID"
-  else
-    echo "错误：无法识别系统"
-    exit 1
-  fi
+  detect_system
 
   case "$OS_NAME" in
     ubuntu|debian)
-      echo "系统检测通过：$PRETTY_NAME"
+      echo "系统检测通过：$OS_PRETTY"
+      ;;
+    alpine)
+      echo "系统检测通过：$OS_PRETTY"
       ;;
     *)
-      echo "提醒：当前系统可能不是 Ubuntu / Debian，脚本仍会尝试继续安装"
+      echo "提醒：当前系统不是 Debian / Ubuntu / Alpine，脚本会按已识别的包管理器尝试继续"
       ;;
   esac
+
+  echo "包管理器：$PKG_MANAGER"
+  echo "服务管理器：$INIT_SYSTEM"
+
+  if [ "$PKG_MANAGER" = "unknown" ]; then
+    echo "错误：未找到 apt 或 apk，暂不支持当前系统"
+    exit 1
+  fi
 }
 
 install_base_packages() {
   echo ""
   echo "正在安装基础依赖..."
 
-  export DEBIAN_FRONTEND=noninteractive
-  apt update -y
-  apt install -y curl wget unzip socat cron ufw net-tools iproute2 procps openssl ca-certificates qrencode jq
+  case "$PKG_MANAGER" in
+    apt)
+      export DEBIAN_FRONTEND=noninteractive
+      apt update -y
+      apt install -y curl wget unzip socat cron ufw net-tools iproute2 procps openssl ca-certificates qrencode jq
+      ;;
+    apk)
+      apk update
+      apk add --no-cache curl wget unzip socat dcron iptables iproute2 procps openssl ca-certificates jq shadow bash grep gawk coreutils util-linux
+      apk add --no-cache qrencode 2>/dev/null || apk add --no-cache libqrencode-tools 2>/dev/null || true
+      rc-update add crond default >/dev/null 2>&1 || true
+      rc-service crond start >/dev/null 2>&1 || true
+      ;;
+  esac
 }
 
 set_shanghai_time() {
   echo ""
   echo "正在设置系统时区为 Asia/Shanghai..."
 
+  if [ "$PKG_MANAGER" = "apk" ]; then
+    apk add --no-cache tzdata >/dev/null 2>&1 || true
+  fi
+
   timedatectl set-timezone Asia/Shanghai 2>/dev/null || true
   timedatectl set-ntp true 2>/dev/null || true
+
+  if [ -f /usr/share/zoneinfo/Asia/Shanghai ]; then
+    ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
+    echo "Asia/Shanghai" >/etc/timezone 2>/dev/null || true
+  fi
 
   if command -v systemctl >/dev/null 2>&1; then
     systemctl enable systemd-timesyncd >/dev/null 2>&1 || true
@@ -123,22 +288,89 @@ install_docker() {
     echo "Docker 已安装"
   else
     echo "正在安装 Docker..."
-    download_to_stdout https://get.docker.com | bash
+    case "$PKG_MANAGER" in
+      apt) download_to_stdout https://get.docker.com | bash ;;
+      apk) apk add --no-cache docker docker-cli ;;
+    esac
   fi
 
-  systemctl enable docker >/dev/null 2>&1 || true
-  systemctl restart docker
+  service_enable docker
+  service_restart docker
+}
+
+detect_xray_asset_arch() {
+  case "$(uname -m)" in
+    x86_64|amd64) echo "64" ;;
+    aarch64|arm64) echo "arm64-v8a" ;;
+    armv7l) echo "arm32-v7a" ;;
+    armv6l) echo "arm32-v6" ;;
+    i386|i686) echo "32" ;;
+    *) echo "" ;;
+  esac
+}
+
+detect_hysteria_asset_arch() {
+  case "$(uname -m)" in
+    x86_64|amd64) echo "amd64" ;;
+    aarch64|arm64) echo "arm64" ;;
+    armv7l) echo "armv7" ;;
+    i386|i686) echo "386" ;;
+    *) echo "" ;;
+  esac
+}
+
+manual_install_xray() {
+  XRAY_ARCH=$(detect_xray_asset_arch)
+
+  if [ -z "$XRAY_ARCH" ]; then
+    echo "错误：当前 CPU 架构暂不支持自动安装 Xray：$(uname -m)"
+    exit 1
+  fi
+
+  TMP_DIR=$(mktemp -d)
+  XRAY_URL="https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-${XRAY_ARCH}.zip"
+
+  echo "正在手动安装 Xray：$XRAY_URL"
+  curl "${CURL_RETRY_OPTS[@]}" "$XRAY_URL" -o "$TMP_DIR/xray.zip"
+  unzip -o "$TMP_DIR/xray.zip" -d "$TMP_DIR/xray" >/dev/null
+
+  mkdir -p /usr/local/bin /usr/local/share/xray /usr/local/etc/xray
+  cp "$TMP_DIR/xray/xray" "$XRAY_BIN"
+  chmod +x "$XRAY_BIN"
+
+  [ -f "$TMP_DIR/xray/geoip.dat" ] && cp "$TMP_DIR/xray/geoip.dat" /usr/local/share/xray/
+  [ -f "$TMP_DIR/xray/geosite.dat" ] && cp "$TMP_DIR/xray/geosite.dat" /usr/local/share/xray/
+
+  rm -rf "$TMP_DIR"
+}
+
+manual_install_hysteria_core() {
+  HY2_ARCH=$(detect_hysteria_asset_arch)
+
+  if [ -z "$HY2_ARCH" ]; then
+    echo "错误：当前 CPU 架构暂不支持自动安装 Hysteria2：$(uname -m)"
+    exit 1
+  fi
+
+  HY2_URL="https://github.com/apernet/hysteria/releases/latest/download/hysteria-linux-${HY2_ARCH}"
+
+  echo "正在手动安装 Hysteria2：$HY2_URL"
+  mkdir -p /usr/local/bin
+  curl "${CURL_RETRY_OPTS[@]}" "$HY2_URL" -o "$HY2_BIN"
+  chmod +x "$HY2_BIN"
 }
 
 install_xray() {
   echo ""
   echo "正在安装 / 更新 Xray Core..."
 
-  bash -c "$(download_to_stdout https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
+  if ! bash -c "$(download_to_stdout https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install; then
+    echo "官方 Xray 安装脚本失败，尝试手动安装二进制..."
+    manual_install_xray
+  fi
 
   if [ ! -f "$XRAY_BIN" ]; then
-    echo "错误：Xray 安装失败，未找到 $XRAY_BIN"
-    exit 1
+    manual_install_xray
   fi
 
   echo "Xray 安装完成：$($XRAY_BIN version | head -n 1)"
@@ -148,11 +380,13 @@ install_hysteria_core() {
   echo ""
   echo "正在安装 / 更新 Hysteria2..."
 
-  bash <(download_to_stdout https://get.hy2.sh/)
+  if ! bash <(download_to_stdout https://get.hy2.sh/); then
+    echo "官方 Hysteria2 安装脚本失败，尝试手动安装二进制..."
+    manual_install_hysteria_core
+  fi
 
   if [ ! -f "$HY2_BIN" ]; then
-    echo "错误：Hysteria2 安装失败，未找到 $HY2_BIN"
-    exit 1
+    manual_install_hysteria_core
   fi
 
   echo "Hysteria2 安装完成：$($HY2_BIN version 2>/dev/null | head -n 1 || echo installed)"
@@ -376,7 +610,10 @@ install_socks5() {
 
   echo ""
   echo "正在安装 Dante SOCKS5..."
-  apt install -y dante-server
+  case "$PKG_MANAGER" in
+    apt) apt install -y dante-server ;;
+    apk) apk add --no-cache dante-server 2>/dev/null || apk add --no-cache dante ;;
+  esac
 
   generate_node_name_by_ipinfo
   DEFAULT_SOCKS_NAME="$AUTO_NODE_NAME"
@@ -448,14 +685,14 @@ CONFIG
 
   open_firewall_tcp_udp "$SOCKS_PORT"
 
-  systemctl restart "$SOCKS_SERVICE"
-  systemctl enable "$SOCKS_SERVICE" >/dev/null 2>&1 || true
+  service_restart "$SOCKS_SERVICE"
+  service_enable "$SOCKS_SERVICE"
 
   sleep 1
 
-  if ! systemctl is-active --quiet "$SOCKS_SERVICE"; then
+  if ! service_is_active "$SOCKS_SERVICE"; then
     echo "错误：Dante 启动失败"
-    journalctl -u "$SOCKS_SERVICE" -n 80 --no-pager
+    service_logs "$SOCKS_SERVICE" 80
     exit 1
   fi
 
@@ -494,11 +731,11 @@ status_socks5() {
   echo " SOCKS5 / SK5 状态"
   echo "======================================"
 
-  systemctl status "$SOCKS_SERVICE" --no-pager || true
+  service_status "$SOCKS_SERVICE"
 
   echo ""
   echo "监听端口："
-  ss -lntup | grep danted || true
+  ss -lntup | grep -E "$SOCKS_PROCESS_PATTERN" || true
 
   echo ""
   echo "配置文件："
@@ -512,13 +749,13 @@ status_socks5() {
 }
 
 restart_socks5() {
-  systemctl restart "$SOCKS_SERVICE"
+  service_restart "$SOCKS_SERVICE"
 
-  if systemctl is-active --quiet "$SOCKS_SERVICE"; then
+  if service_is_active "$SOCKS_SERVICE"; then
     echo "SOCKS5 重启成功"
   else
     echo "SOCKS5 重启失败"
-    journalctl -u "$SOCKS_SERVICE" -n 80 --no-pager
+    service_logs "$SOCKS_SERVICE" 80
   fi
 }
 
@@ -531,9 +768,12 @@ uninstall_socks5() {
     exit 0
   fi
 
-  systemctl stop "$SOCKS_SERVICE" 2>/dev/null || true
-  systemctl disable "$SOCKS_SERVICE" 2>/dev/null || true
-  apt remove -y dante-server || true
+  service_stop "$SOCKS_SERVICE"
+  service_disable "$SOCKS_SERVICE"
+  case "$PKG_MANAGER" in
+    apt) apt remove -y dante-server || true ;;
+    apk) apk del dante-server 2>/dev/null || apk del dante 2>/dev/null || true ;;
+  esac
   rm -f "$SOCKS_CONFIG"
 
   echo "SOCKS5 / SK5 已卸载"
@@ -795,17 +1035,46 @@ test_xray_config() {
   fi
 }
 
+ensure_openrc_xray_service() {
+  if [ "$INIT_SYSTEM" != "openrc" ]; then
+    return
+  fi
+
+  cat > /etc/init.d/xray <<'OPENRC'
+#!/sbin/openrc-run
+
+name="xray"
+description="Xray proxy service"
+command="/usr/local/bin/xray"
+command_args="run -config /usr/local/etc/xray/config.json"
+command_background="yes"
+pidfile="/run/xray.pid"
+directory="/usr/local/etc/xray"
+output_log="/var/log/xray.log"
+error_log="/var/log/xray.err"
+
+depend() {
+  need net
+  after firewall
+}
+OPENRC
+
+  chmod +x /etc/init.d/xray
+}
+
 start_xray() {
-  systemctl restart "$XRAY_SERVICE"
-  systemctl enable "$XRAY_SERVICE" >/dev/null 2>&1 || true
+  ensure_openrc_xray_service
+
+  service_restart "$XRAY_SERVICE"
+  service_enable "$XRAY_SERVICE"
 
   sleep 2
 
-  if systemctl is-active --quiet "$XRAY_SERVICE"; then
+  if service_is_active "$XRAY_SERVICE"; then
     echo "Xray 启动成功"
   else
     echo "错误：Xray 启动失败"
-    journalctl -u "$XRAY_SERVICE" -n 80 --no-pager
+    service_logs "$XRAY_SERVICE" 80
     exit 1
   fi
 }
@@ -902,7 +1171,7 @@ status_reality() {
   echo " VLESS Reality 状态"
   echo "======================================"
 
-  systemctl status "$XRAY_SERVICE" --no-pager || true
+  service_status "$XRAY_SERVICE"
 
   echo ""
   echo "监听端口："
@@ -910,7 +1179,7 @@ status_reality() {
 
   echo ""
   echo "最近日志："
-  journalctl -u "$XRAY_SERVICE" -n 50 --no-pager || true
+  service_logs "$XRAY_SERVICE" 50
 
   echo ""
   echo "配置文件路径：$XRAY_CONFIG"
@@ -919,13 +1188,13 @@ status_reality() {
 }
 
 restart_reality() {
-  systemctl restart "$XRAY_SERVICE"
+  service_restart "$XRAY_SERVICE"
 
-  if systemctl is-active --quiet "$XRAY_SERVICE"; then
+  if service_is_active "$XRAY_SERVICE"; then
     echo "Reality 重启成功"
   else
     echo "Reality 重启失败"
-    journalctl -u "$XRAY_SERVICE" -n 80 --no-pager
+    service_logs "$XRAY_SERVICE" 80
   fi
 }
 
@@ -938,9 +1207,10 @@ uninstall_reality() {
     exit 0
   fi
 
-  systemctl stop "$XRAY_SERVICE" 2>/dev/null || true
-  systemctl disable "$XRAY_SERVICE" 2>/dev/null || true
+  service_stop "$XRAY_SERVICE"
+  service_disable "$XRAY_SERVICE"
   bash -c "$(download_to_stdout https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ remove --purge || true
+  rm -f /etc/init.d/xray
 
   echo "Xray Reality 已卸载"
 }
@@ -1014,23 +1284,51 @@ EOF
   echo "Hysteria2 配置写入完成，权限已修复"
 }
 
+ensure_openrc_hy2_service() {
+  if [ "$INIT_SYSTEM" != "openrc" ]; then
+    return
+  fi
+
+  cat > /etc/init.d/hysteria-server <<'OPENRC'
+#!/sbin/openrc-run
+
+name="hysteria-server"
+description="Hysteria2 server"
+command="/usr/local/bin/hysteria"
+command_args="server -c /etc/hysteria/config.yaml"
+command_background="yes"
+pidfile="/run/hysteria-server.pid"
+directory="/etc/hysteria"
+output_log="/var/log/hysteria-server.log"
+error_log="/var/log/hysteria-server.err"
+
+depend() {
+  need net
+  after firewall
+}
+OPENRC
+
+  chmod +x /etc/init.d/hysteria-server
+}
+
 start_hy2() {
   echo ""
   echo "正在启动 Hysteria2..."
 
   fix_hy2_permissions
 
-  systemctl daemon-reload
-  systemctl restart "$HY2_SERVICE"
-  systemctl enable "$HY2_SERVICE" >/dev/null 2>&1 || true
+  ensure_openrc_hy2_service
+  service_daemon_reload
+  service_restart "$HY2_SERVICE"
+  service_enable "$HY2_SERVICE"
 
   sleep 2
 
-  if systemctl is-active --quiet "$HY2_SERVICE"; then
+  if service_is_active "$HY2_SERVICE"; then
     echo "Hysteria2 启动成功"
   else
     echo "错误：Hysteria2 启动失败，请查看日志："
-    journalctl -u "$HY2_SERVICE" -n 100 --no-pager
+    service_logs "$HY2_SERVICE" 100
     exit 1
   fi
 }
@@ -1125,7 +1423,7 @@ status_hy2() {
   echo " Hysteria2 / HY2 状态"
   echo "======================================"
 
-  systemctl status "$HY2_SERVICE" --no-pager || true
+  service_status "$HY2_SERVICE"
 
   echo ""
   echo "监听端口："
@@ -1133,7 +1431,7 @@ status_hy2() {
 
   echo ""
   echo "最近日志："
-  journalctl -u "$HY2_SERVICE" -n 50 --no-pager || true
+  service_logs "$HY2_SERVICE" 50
 
   echo ""
   echo "配置文件路径：$HY2_CONFIG"
@@ -1148,14 +1446,14 @@ status_hy2() {
 
 restart_hy2() {
   fix_hy2_permissions
-  systemctl daemon-reload
-  systemctl restart "$HY2_SERVICE"
+  service_daemon_reload
+  service_restart "$HY2_SERVICE"
 
-  if systemctl is-active --quiet "$HY2_SERVICE"; then
+  if service_is_active "$HY2_SERVICE"; then
     echo "Hysteria2 重启成功"
   else
     echo "Hysteria2 重启失败"
-    journalctl -u "$HY2_SERVICE" -n 100 --no-pager
+    service_logs "$HY2_SERVICE" 100
   fi
 }
 
@@ -1168,12 +1466,13 @@ uninstall_hy2() {
     exit 0
   fi
 
-  systemctl stop "$HY2_SERVICE" 2>/dev/null || true
-  systemctl disable "$HY2_SERVICE" 2>/dev/null || true
+  service_stop "$HY2_SERVICE"
+  service_disable "$HY2_SERVICE"
 
   bash <(download_to_stdout https://get.hy2.sh/) --remove || true
 
   rm -rf /etc/hysteria
+  rm -f /etc/init.d/hysteria-server
 
   echo "Hysteria2 / HY2 已卸载"
 }
