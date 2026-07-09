@@ -9,7 +9,7 @@
 推荐使用 jsDelivr CDN 入口，避免 `raw.githubusercontent.com` 被部分 VPS 出口 IP 临时限流。
 
 ```bash
-bash <(curl -fsSL https://cdn.jsdelivr.net/gh/qiyao111111/proxy@main/install.sh)
+bash <(curl -fsSL https://cdn.jsdelivr.net/gh/qiyao111111/proxy@v1.1.0/install.sh)
 ```
 
 备用入口：
