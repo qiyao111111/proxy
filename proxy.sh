@@ -35,7 +35,7 @@ download_to_stdout() {
   curl "${CURL_RETRY_OPTS[@]}" "$1"
 }
 
-clear
+clear 2>/dev/null || true
 echo "======================================"
 echo " 四合一代理一键管理脚本"
 echo " 1. SOCKS5 / SK5"
